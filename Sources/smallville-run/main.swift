@@ -88,6 +88,8 @@ struct Report: Codable {
     var brain: String
     var budget: BudgetSummary
     var brainFailures: Int
+    /// Conversations held this run; the quickest check that agents are meeting at all.
+    var conversations: Int
     var eventCount: Int
     var discoveries: [Discovery]
 }
@@ -198,7 +200,12 @@ do {
     }
     let report = Report(
         gameMinutes: hours * 60, agents: profiles.count, seed: options.seed, brain: brainName,
-        budget: snapshot.budget, brainFailures: snapshot.brainFailures, eventCount: snapshot.eventCount,
+        budget: snapshot.budget, brainFailures: snapshot.brainFailures,
+        conversations: events.filter {
+            if case .conversed = $0 { return true }
+            return false
+        }.count,
+        eventCount: snapshot.eventCount,
         discoveries: await simulation.discoveries())
 
     let encoder = JSONEncoder()

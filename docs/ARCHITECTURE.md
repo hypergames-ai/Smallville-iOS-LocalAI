@@ -30,6 +30,8 @@ Smallville's loop is kept, its call structure is not.
 | Reflection | several calls per trigger | 1 call when accumulated importance crosses a threshold, at most 3 per day and ≥1 h apart → `[Reflection]` | ~2, cap 3 |
 | **Total** | 600–1,000 | | **~26, budget 45** |
 
+The day- and hour-plan prompts name the profile's workplace, favorite spot and home, and tag them (plus storyline venues) in the location list, so the model plans the day where the profile implies; nothing in the core forces a location.
+
 Every brain method returns `BrainResponse<T>` = value + `BrainCallReceipt` (tokens, wall time). On the device, each call is a fresh session with the agent's persona as instructions (the initiator's for a conversation; ADR 13); receipts carry the response's real `usage` on iOS 27 (26.4: `tokenCount`, unverified on a device; earlier: an estimate). Hour plans and conversations are generated against a `DynamicGenerationSchema` built per call, so locations, storyline ids and speaker names can only be known values, then decoded into the `@Generable` mirror types. `Simulation.record` feeds `CallBudget`; `budget.summary()` is the number the tests and the runner print. A conversation is one call in the totals and half a call on each participant's agent-day: the per-agent limit is a worst case, and either participant's device would run the same inference.
 
 An agent's location list (`AgentContext.knownLocations`) runs workplace, favorite spot, known storyline venues, home, then public places, and that is also the hour-plan schema's choice order: daytime places first, so the list itself doesn't pull agents home.
