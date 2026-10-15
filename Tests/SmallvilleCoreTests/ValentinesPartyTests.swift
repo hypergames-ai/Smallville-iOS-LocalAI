@@ -31,10 +31,11 @@ struct ValentinesPartyTests {
         try await simulation.run(minutes: 2 * SimTime.minutesPerDay)
 
         let discovery = try #require(await simulation.discoveries().first)
-        #expect(discovery.knows.count >= 2, "someone other than Isabella should have heard about the party")
+        #expect(discovery.knows.count == 3, "everyone should have heard about the party")
         #expect(!discovery.diffusion.isEmpty, "there should be a told-by chain")
         #expect(discovery.invited.count >= 1)
-        #expect(discovery.attended.contains(AgentProfile.isabella.id))
+        #expect(discovery.host == AgentProfile.isabella.id)
+        #expect(discovery.attended.contains(discovery.host))
         #expect(discovery.attended.count >= 2, "at least one invitee should be at the cafe at 5pm on day 2")
     }
 
@@ -48,6 +49,9 @@ struct ValentinesPartyTests {
         #expect(summary.withinBudget)
         #expect(summary.maxCallsPerAgentDay <= CallBudget.maxCallsPerAgentDay)
         #expect(summary.callsByKind["planHour", default: 0] > 0)
+        #expect(
+            summary.callsByKind["planHour", default: 0] <= 16 * summary.agentDays,
+            "one hour-plan call per waking hour, wake 6 to sleep 22")
     }
 
     @Test("same seed and whispers replay to identical events (seed 3)")

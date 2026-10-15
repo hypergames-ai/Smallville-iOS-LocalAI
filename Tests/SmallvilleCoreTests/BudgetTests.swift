@@ -29,6 +29,26 @@ struct BudgetTests {
         #expect(!summary.withinBudget)
     }
 
+    @Test("a shared call moves both agents' day counts together and counts once in the totals")
+    func sharedCall() {
+        var budget = CallBudget()
+        let receipt = BrainCallReceipt(inputTokens: 500, outputTokens: 200, wallSeconds: 3)
+        budget.record(.converse, agents: [AgentID("a"), AgentID("b")], day: 0, receipt: receipt)
+        budget.record(.converse, agents: [AgentID("a"), AgentID("b")], day: 0, receipt: receipt)
+        #expect(budget.callsByAgentDay["a/0"] == 1)
+        #expect(budget.callsByAgentDay["b/0"] == 1)
+        #expect(budget.callsByAgentDay["a/0"] == budget.callsByAgentDay["b/0"])
+
+        let summary = budget.summary()
+        #expect(summary.totalCalls == 2)
+        #expect(summary.callsByKind["converse"] == 2)
+        #expect(summary.maxCallsPerAgentDay == 1)
+        #expect(summary.totalInputTokens == 1000)
+
+        budget.record(.converse, agents: [AgentID("a"), AgentID("b")], day: 0, receipt: receipt)
+        #expect(budget.summary().maxCallsPerAgentDay == 2, "a half share rounds up against the limit")
+    }
+
     @Test("a quiet day is within budget")
     func quietDay() {
         var budget = CallBudget()

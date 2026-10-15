@@ -8,13 +8,17 @@ public struct AgentContext: Sendable {
     public var location: Location
     public var relevantMemories: [MemoryNode]
     public var knownLocations: [Location]
-    /// Storylines this agent has at least one memory about.
+    /// Storylines this agent has at least one memory about, nearest event first, capped by
+    /// `Simulation.Configuration.maxStorylinesInContext`.
     public var activeStorylines: [Storyline]
     public var dayPlan: DayPlan?
+    /// The day-plan entry in force this hour: the task the hour plan decomposes.
+    public var currentEntry: DayPlanEntry?
 
     public init(
         profile: AgentProfile, now: SimTime, location: Location, relevantMemories: [MemoryNode],
-        knownLocations: [Location], activeStorylines: [Storyline], dayPlan: DayPlan?
+        knownLocations: [Location], activeStorylines: [Storyline], dayPlan: DayPlan?,
+        currentEntry: DayPlanEntry? = nil
     ) {
         self.profile = profile
         self.now = now
@@ -23,6 +27,7 @@ public struct AgentContext: Sendable {
         self.knownLocations = knownLocations
         self.activeStorylines = activeStorylines
         self.dayPlan = dayPlan
+        self.currentEntry = currentEntry
     }
 }
 
@@ -45,6 +50,11 @@ public struct DayPlan: Hashable, Sendable, Codable {
     public init(wakeHour: Int, entries: [DayPlanEntry]) {
         self.wakeHour = wakeHour
         self.entries = entries
+    }
+
+    /// The entry in force at `hour`: the latest one that starts at or before it.
+    public func entry(at hour: Int) -> DayPlanEntry? {
+        entries.filter { $0.hour <= hour }.max { $0.hour < $1.hour }
     }
 }
 
@@ -95,6 +105,37 @@ public struct HourPlan: Hashable, Sendable, Codable {
 
     public func action(atMinute minute: Int) -> PlannedAction? {
         actions.last { $0.startMinute <= minute }
+    }
+
+    /// The largest number of actions an hour is allowed to hold.
+    public static let maxActions = 3
+
+    /// Makes the plan safe to execute: starts clamped to the hour and snapped down to the tick
+    /// grid (the simulation only samples minutes 0, 10, ..., 50), sorted, duplicates at the same
+    /// start dropped, the first action pulled to minute 0, durations set to the gap to the next
+    /// action (the last runs to the end of the hour), and at most `maxActions` kept.
+    public func normalized(hour: Int) -> HourPlan {
+        guard !actions.isEmpty else { return HourPlan(hour: hour, actions: []) }
+        let tick = SimTime.minutesPerTick
+        let clamped = actions.enumerated().map { offset, action -> (Int, PlannedAction) in
+            var action = action
+            action.startMinute = max(0, min(59, action.startMinute)) / tick * tick
+            return (offset, action)
+        }
+        let sorted = clamped.sorted {
+            $0.1.startMinute == $1.1.startMinute ? $0.0 < $1.0 : $0.1.startMinute < $1.1.startMinute
+        }
+        var kept: [PlannedAction] = []
+        for (_, action) in sorted where kept.last?.startMinute != action.startMinute {
+            kept.append(action)
+            if kept.count == Self.maxActions { break }
+        }
+        kept[0].startMinute = 0
+        for index in kept.indices {
+            let end = index + 1 < kept.count ? kept[index + 1].startMinute : 60
+            kept[index].durationMinutes = end - kept[index].startMinute
+        }
+        return HourPlan(hour: hour, actions: kept)
     }
 }
 
@@ -150,7 +191,8 @@ public struct ConversationRequest: Sendable {
 /// A higher-level thought synthesized from memories.
 public struct Reflection: Hashable, Sendable, Codable {
     public var insight: String
-    /// Ids of the memories that support it.
+    /// Ids of the memories that support it. The core drops ids the agent does not have, and
+    /// drops the whole insight if none remain.
     public var evidence: [Int]
 
     public init(insight: String, evidence: [Int]) {

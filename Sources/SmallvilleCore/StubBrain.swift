@@ -41,12 +41,15 @@ public struct StubBrain: AgentBrain {
                 value: HourPlan(hour: hour, actions: [action]), receipt: receipt(for: context, outputTokens: 80))
         }
 
-        let stop = routine(for: profile, hour: hour)
-        let action = PlannedAction(
-            startMinute: 0, durationMinutes: 60, activity: stop.activity, location: stop.location, emoji: stop.emoji,
-            event: EventTriple(subject: profile.name, predicate: "is", object: stop.activity))
+        let actions = routine(for: profile, hour: hour).map { stop in
+            PlannedAction(
+                startMinute: stop.startMinute, durationMinutes: 60 - stop.startMinute, activity: stop.activity,
+                location: stop.location, emoji: stop.emoji,
+                event: EventTriple(subject: profile.name, predicate: "is", object: stop.activity))
+        }
         return BrainResponse(
-            value: HourPlan(hour: hour, actions: [action]), receipt: receipt(for: context, outputTokens: 80))
+            value: HourPlan(hour: hour, actions: actions),
+            receipt: receipt(for: context, outputTokens: 40 * actions.count))
     }
 
     public func converse(_ request: ConversationRequest) async throws -> BrainResponse<Conversation> {
@@ -57,7 +60,8 @@ public struct StubBrain: AgentBrain {
 
         var turns = [
             ConversationTurn(speaker: a.profile.id, text: "Hi \(b.profile.name)! How is it going?"),
-            ConversationTurn(speaker: b.profile.id, text: "Hey \(a.profile.name), good. Just \(b.location.name) things."),
+            ConversationTurn(
+                speaker: b.profile.id, text: "Hey \(a.profile.name), good. Just \(b.location.name) things."),
         ]
         var acts: [SocialAct] = []
         var conveyed: [StorylineID] = []
@@ -100,6 +104,7 @@ public struct StubBrain: AgentBrain {
         let ratings = texts.map { text -> Int in
             let lowered = text.lowercased()
             if lowered.contains("party") || lowered.contains("valentine") { return 7 }
+            if lowered.contains("looking forward") || lowered.contains("lately") { return 6 }
             if lowered.contains("talked with") { return 5 }
             if lowered.contains("saw") { return 2 }
             return 3
@@ -113,19 +118,32 @@ public struct StubBrain: AgentBrain {
     // MARK: - Helpers
 
     private struct Stop {
+        var startMinute = 0
         var location: LocationID
         var activity: String
         var emoji: String
     }
 
-    private func routine(for profile: AgentProfile, hour: Int) -> Stop {
+    /// A fixed daily routine. Lunch and the first evening hour are split in two so the
+    /// simulation's action decomposition runs in every stub run.
+    private func routine(for profile: AgentProfile, hour: Int) -> [Stop] {
+        let working = Stop(location: profile.workplace, activity: "working as \(profile.occupation)", emoji: "💼")
         switch hour {
-        case ..<9: return Stop(location: profile.home, activity: "having breakfast", emoji: "🍳")
-        case 9..<13: return Stop(location: profile.workplace, activity: "working as \(profile.occupation)", emoji: "💼")
-        case 13: return Stop(location: profile.favoriteSpot, activity: "having lunch", emoji: "🥗")
-        case 14..<18: return Stop(location: profile.workplace, activity: "working as \(profile.occupation)", emoji: "💼")
-        case 18..<21: return Stop(location: profile.favoriteSpot, activity: "relaxing with a coffee", emoji: "☕️")
-        default: return Stop(location: profile.home, activity: "relaxing at home", emoji: "🏠")
+        case ..<9: return [Stop(location: profile.home, activity: "having breakfast", emoji: "🍳")]
+        case 9..<13: return [working]
+        case 13:
+            return [
+                Stop(location: profile.favoriteSpot, activity: "having lunch", emoji: "🥗"),
+                Stop(startMinute: 30, location: profile.favoriteSpot, activity: "chatting over coffee", emoji: "💬"),
+            ]
+        case 14..<18: return [working]
+        case 18:
+            return [
+                Stop(location: profile.favoriteSpot, activity: "relaxing with a coffee", emoji: "☕️"),
+                Stop(startMinute: 40, location: profile.favoriteSpot, activity: "reading", emoji: "📖"),
+            ]
+        case 19..<21: return [Stop(location: profile.favoriteSpot, activity: "relaxing with a coffee", emoji: "☕️")]
+        default: return [Stop(location: profile.home, activity: "relaxing at home", emoji: "🏠")]
         }
     }
 
@@ -157,7 +175,8 @@ public struct StubBrain: AgentBrain {
     }
 
     private func receipt(for context: AgentContext, outputTokens: Int) -> BrainCallReceipt {
-        let characters = context.relevantMemories.reduce(0) { $0 + $1.text.count } + context.profile.currently.count + 600
+        let characters =
+            context.relevantMemories.reduce(0) { $0 + $1.text.count } + context.profile.currently.count + 600
         return BrainCallReceipt(inputTokens: characters / 4, outputTokens: outputTokens, wallSeconds: 0)
     }
 }

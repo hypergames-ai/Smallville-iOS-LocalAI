@@ -93,6 +93,11 @@ public struct MemoryStream: Sendable, Codable {
         Array(nodes.suffix(count))
     }
 
+    /// The paper's retention rule: true if the same text was stored within the last `count` nodes.
+    public func recentlyContains(_ text: String, within count: Int) -> Bool {
+        nodes.suffix(count).contains { $0.text == text }
+    }
+
     /// Top-`limit` nodes by normalized recency + importance + relevance. Touches `lastAccessed`
     /// on the returned nodes, as the paper does.
     public mutating func retrieve(

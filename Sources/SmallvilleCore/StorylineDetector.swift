@@ -4,13 +4,17 @@ import Foundation
 /// who knows (memory tags), who told whom (provenance), who was invited and accepted
 /// (social acts), and who showed up (position log).
 public enum StorylineDetector {
+    /// `attended` needs at least `minimumDwellSamples` position samples (one per tick) at the
+    /// venue inside the window, so passing through does not count. The host is not excluded;
+    /// `Discovery.host` says who they are.
     public static func detect(
         _ storyline: Storyline, memories: [AgentID: MemoryStream], events: [SimEvent], positions: [PositionSample],
-        attendanceWindowMinutes: Int = 60
+        attendanceWindowMinutes: Int = 60, minimumDwellSamples: Int = 2
     ) -> Discovery {
         var knows: [AgentID] = []
         var evidence: [AgentID: [Int]] = [:]
-        var edges: [DiffusionEdge] = []
+        // The earliest time each pair told each other; one conversation can leave several told-by memories.
+        var firstTold: [AgentID: [AgentID: SimTime]] = [:]
 
         for (agent, stream) in memories.sorted(by: { $0.key < $1.key }) {
             let nodes = stream.nodes(for: storyline.id)
@@ -19,8 +23,16 @@ public enum StorylineDetector {
             evidence[agent] = nodes.map(\.id)
             for node in nodes {
                 if case .told(let by, let at) = node.provenance {
-                    edges.append(DiffusionEdge(from: by, to: agent, at: at))
+                    if firstTold[by, default: [:]][agent].map({ at < $0 }) ?? true {
+                        firstTold[by, default: [:]][agent] = at
+                    }
                 }
+            }
+        }
+        var edges: [DiffusionEdge] = []
+        for (from, tos) in firstTold.sorted(by: { $0.key < $1.key }) {
+            for (to, at) in tos.sorted(by: { $0.key < $1.key }) {
+                edges.append(DiffusionEdge(from: from, to: to, at: at))
             }
         }
 
@@ -40,14 +52,16 @@ public enum StorylineDetector {
         var attended: [AgentID] = []
         if let location = storyline.targetLocation, let time = storyline.eventTime {
             let window = (time.minutes - attendanceWindowMinutes)...(time.minutes + attendanceWindowMinutes)
-            attended = Set(
-                positions.filter { $0.location == location && window.contains($0.at.minutes) }.map(\.agent)
-            ).sorted()
+            var dwell: [AgentID: Int] = [:]
+            for sample in positions where sample.location == location && window.contains(sample.at.minutes) {
+                dwell[sample.agent, default: 0] += 1
+            }
+            attended = dwell.filter { $0.value >= max(1, minimumDwellSamples) }.keys.sorted()
         }
 
         return Discovery(
-            storyline: storyline.id, title: storyline.title, knows: knows, invited: invited.sorted(),
-            accepted: accepted.sorted(), attended: attended, diffusion: edges.sorted { $0.at < $1.at },
-            evidence: evidence)
+            storyline: storyline.id, title: storyline.title, host: storyline.seededIn, knows: knows,
+            invited: invited.sorted(), accepted: accepted.sorted(), attended: attended,
+            diffusion: edges.sorted { ($0.at, $0.from, $0.to) < ($1.at, $1.from, $1.to) }, evidence: evidence)
     }
 }

@@ -25,9 +25,11 @@ enum Prompts {
 
     static func hourPlan(_ context: AgentContext, dayPlan: DayPlan) -> String {
         let outline = dayPlan.entries.map { "\($0.hour):00 \($0.activity)" }.joined(separator: "; ")
+        let task = context.currentEntry?.activity ?? "whatever fits the outline"
         return """
             It is \(context.now). \(context.profile.name) is at \(context.location.name).
             Today's outline: \(outline)
+            This hour's task: \(task)
             \(locationBlock(context))
             \(storylineBlock(context))
             \(memoryBlock(context))

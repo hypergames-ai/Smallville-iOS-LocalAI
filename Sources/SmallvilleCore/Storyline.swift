@@ -74,6 +74,8 @@ public struct Discovery: Hashable, Sendable, Codable, Identifiable {
     public var id: String { storyline.rawValue }
     public var storyline: StorylineID
     public var title: String
+    /// The agent the storyline was seeded in. The UI labels them; the detector does not exclude them.
+    public var host: AgentID
     public var knows: [AgentID]
     public var invited: [AgentID]
     public var accepted: [AgentID]
@@ -83,16 +85,53 @@ public struct Discovery: Hashable, Sendable, Codable, Identifiable {
     public var evidence: [AgentID: [Int]]
 
     public init(
-        storyline: StorylineID, title: String, knows: [AgentID], invited: [AgentID], accepted: [AgentID],
-        attended: [AgentID], diffusion: [DiffusionEdge], evidence: [AgentID: [Int]]
+        storyline: StorylineID, title: String, host: AgentID, knows: [AgentID], invited: [AgentID],
+        accepted: [AgentID], attended: [AgentID], diffusion: [DiffusionEdge], evidence: [AgentID: [Int]]
     ) {
         self.storyline = storyline
         self.title = title
+        self.host = host
         self.knows = knows
         self.invited = invited
         self.accepted = accepted
         self.attended = attended
         self.diffusion = diffusion
         self.evidence = evidence
+    }
+
+    // `evidence` is written as a JSON object keyed by agent id, so an encoder with `.sortedKeys`
+    // (the runner's) produces the same bytes on every run. Swift would otherwise encode a
+    // dictionary with a struct key as a flat array, which `.sortedKeys` cannot order.
+
+    private enum CodingKeys: String, CodingKey {
+        case storyline, title, host, knows, invited, accepted, attended, diffusion, evidence
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        storyline = try container.decode(StorylineID.self, forKey: .storyline)
+        title = try container.decode(String.self, forKey: .title)
+        host = try container.decode(AgentID.self, forKey: .host)
+        knows = try container.decode([AgentID].self, forKey: .knows)
+        invited = try container.decode([AgentID].self, forKey: .invited)
+        accepted = try container.decode([AgentID].self, forKey: .accepted)
+        attended = try container.decode([AgentID].self, forKey: .attended)
+        diffusion = try container.decode([DiffusionEdge].self, forKey: .diffusion)
+        let raw = try container.decode([String: [Int]].self, forKey: .evidence)
+        evidence = Dictionary(uniqueKeysWithValues: raw.map { (AgentID($0.key), $0.value) })
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(storyline, forKey: .storyline)
+        try container.encode(title, forKey: .title)
+        try container.encode(host, forKey: .host)
+        try container.encode(knows, forKey: .knows)
+        try container.encode(invited, forKey: .invited)
+        try container.encode(accepted, forKey: .accepted)
+        try container.encode(attended, forKey: .attended)
+        try container.encode(diffusion, forKey: .diffusion)
+        let raw = Dictionary(uniqueKeysWithValues: evidence.map { ($0.key.rawValue, $0.value) })
+        try container.encode(raw, forKey: .evidence)
     }
 }

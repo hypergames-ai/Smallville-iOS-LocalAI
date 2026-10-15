@@ -9,12 +9,27 @@ public actor Simulation {
         public var maxConversationTurns = 6
         public var conversationCooldownMinutes = 120
         public var maxConversationsPerAgentDay = 4
-        /// Sum of poignancy since the last reflection that triggers one.
-        public var reflectionImportanceThreshold = 40
+        /// Sum of poignancy since the last reflection that triggers one. 60 is a stub-era
+        /// default; tune after the first `--fm` run, when real ratings replace the stub's.
+        public var reflectionImportanceThreshold = 60
+        /// Hard ceiling on reflection calls per agent per day; the threshold decides when, this decides how many.
+        public var maxReflectionsPerAgentDay = 3
+        /// Two reflections are never closer than this.
+        public var reflectionSpacingMinutes = 60
         /// Observations are rated in one batched call every N waking hours.
         public var poignancyBatchHours = 4
         public var retrievalLimit = 8
         public var sleepHour = 22
+        /// Most locations listed in a prompt; keeps the hour-plan prompt flat as the town grows.
+        public var maxLocationsInContext = 12
+        /// Most observations rated in one `ratePoignancy` call; the rest wait for the next batch.
+        public var maxPoignancyBatch = 24
+        /// An agent's own action or arrival identical to one of its last N memories is not stored again.
+        public var perceptionRetention = 5
+        /// Most storylines mentioned in a prompt (nearest event first), so whispers can't grow it.
+        public var maxStorylinesInContext = 4
+        /// Ticks an agent must spend at a storyline's venue around its event time to count as attending.
+        public var minimumDwellSamples = 2
 
         public init() {}
     }
@@ -47,8 +62,12 @@ public actor Simulation {
         var hourPlan: HourPlan?
         var hourPlanKey: Int?
         var currentAction: PlannedAction?
+        /// Where the agent is walking to and when it gets there; nil when settled.
+        var travel: (to: LocationID, arrives: SimTime)?
         var lastConversation: SimTime?
         var conversationsToday = 0
+        var lastReflection: SimTime?
+        var reflectionsToday = 0
         var pendingPoignancy: [Int] = []
         var lastPoignancyKey: Int?
         var seen: [AgentID: String] = [:]
@@ -162,7 +181,9 @@ public actor Simulation {
     public func discoveries() -> [Discovery] {
         let memories = agents.mapValues(\.memory)
         return storylines.values.sorted { $0.id < $1.id }.map {
-            StorylineDetector.detect($0, memories: memories, events: events, positions: positions)
+            StorylineDetector.detect(
+                $0, memories: memories, events: events, positions: positions,
+                minimumDwellSamples: configuration.minimumDwellSamples)
         }
     }
 
@@ -175,19 +196,42 @@ public actor Simulation {
     private func makeContext(for runtime: inout AgentRuntime, query: String) -> AgentContext {
         let memories = runtime.memory.retrieve(
             query: embedder.embed(query), now: now, limit: configuration.retrievalLimit)
-        let known = storylines.values.filter { runtime.memory.knows($0.id) }.sorted { $0.id < $1.id }
+        // Upcoming events first (soonest first), then past ones (most recent first), then the
+        // undated; the cap must never let old events crowd out a new one.
+        func rank(_ storyline: Storyline) -> (Int, Int, StorylineID) {
+            guard let time = storyline.eventTime else { return (2, 0, storyline.id) }
+            return time >= now
+                ? (0, time.minutes - now.minutes, storyline.id) : (1, now.minutes - time.minutes, storyline.id)
+        }
+        let known = Array(
+            storylines.values.filter { runtime.memory.knows($0.id) }
+                .sorted { rank($0) < rank($1) }
+                .prefix(configuration.maxStorylinesInContext))
         let here =
             world.location(runtime.location)
             ?? Location(
                 id: runtime.location, name: runtime.location.rawValue, sector: "", arena: "", objects: [],
                 isPublic: false)
-        var locations = world.publicLocations
-        if let home = world.location(runtime.profile.home) {
-            locations.append(home)
-        }
         return AgentContext(
             profile: runtime.profile, now: now, location: here, relevantMemories: memories,
-            knownLocations: locations, activeStorylines: known, dayPlan: runtime.dayPlan)
+            knownLocations: knownLocations(for: runtime, storylines: known), activeStorylines: known,
+            dayPlan: runtime.dayPlan, currentEntry: runtime.dayPlan?.entry(at: now.hour))
+    }
+
+    /// The places an agent may choose from, in a fixed order: its own three, any storyline venue
+    /// it knows about, then public places by id, capped so the prompt does not grow with the town.
+    private func knownLocations(for runtime: AgentRuntime, storylines: [Storyline]) -> [Location] {
+        var ids = [runtime.profile.home, runtime.profile.workplace, runtime.profile.favoriteSpot]
+        ids += storylines.compactMap(\.targetLocation)
+        ids += world.publicLocations.map(\.id)
+        var seen = Set<LocationID>()
+        var result: [Location] = []
+        for id in ids where seen.insert(id).inserted {
+            guard let location = world.location(id) else { continue }
+            result.append(location)
+            if result.count == configuration.maxLocationsInContext { break }
+        }
+        return result
     }
 
     private func planDayIfNeeded(_ id: AgentID) async throws {
@@ -195,6 +239,7 @@ public actor Simulation {
         let context = makeContext(for: &runtime, query: "\(runtime.profile.name)'s plan for today")
         runtime.dayPlanDay = now.day
         runtime.conversationsToday = 0
+        runtime.reflectionsToday = 0
         agents[id] = runtime
         do {
             let response = try await brain.planDay(context)
@@ -232,20 +277,23 @@ public actor Simulation {
         do {
             let response = try await brain.planHour(context, dayPlan: dayPlan)
             record(.planHour, id, response.receipt)
-            var plan = response.value
-            plan.hour = now.hour
+            var plan = response.value.normalized(hour: now.hour)
+            // Places are a lookup against the map; an unknown one means "stay where the previous
+            // action was", so a bad name never teleports anyone.
+            var previous = context.location.id
             plan.actions = plan.actions.map { action in
                 var action = action
-                if !world.contains(action.location) {
-                    action.location = context.location.id
-                }
+                action.location = world.resolve(action.location.rawValue) ?? previous
+                previous = action.location
                 return action
             }
             if plan.actions.isEmpty {
+                let activity = context.currentEntry.map { "continuing to \($0.activity)" } ?? "idling"
                 plan.actions = [
                     PlannedAction(
-                        startMinute: 0, durationMinutes: 60, activity: "idling", location: context.location.id,
-                        emoji: "🙂", event: EventTriple(subject: context.profile.name, predicate: "is", object: "idle"))
+                        startMinute: 0, durationMinutes: 60, activity: activity, location: context.location.id,
+                        emoji: "🙂", event: EventTriple(subject: context.profile.name, predicate: "is", object: activity)
+                    )
                 ]
             }
             agents[id]?.hourPlan = plan
@@ -260,23 +308,43 @@ public actor Simulation {
             positions.append(PositionSample(agent: id, location: runtime.location, at: now))
             agents[id] = runtime
         }
-        guard let plan = runtime.hourPlan,
-            let action = plan.action(atMinute: now.minuteOfHour) ?? plan.actions.last
-        else { return }
-        guard runtime.currentAction != action else { return }
-
-        runtime.currentAction = action
-        events.append(.acted(agent: id, action: action, at: now))
-        if action.location != runtime.location {
-            runtime.location = action.location
-            events.append(.moved(agent: id, to: action.location, at: now))
-            let placeName = world.location(action.location)?.name ?? action.location.rawValue
-            let text = "\(runtime.profile.name) arrived at \(placeName) to \(action.activity)"
-            let node = runtime.memory.append(
-                kind: .observation, text: text, poignancy: 3, provenance: .observed,
-                embedding: embedder.embed(text), at: now)
-            runtime.pendingPoignancy.append(node.id)
+        if let plan = runtime.hourPlan,
+            let action = plan.action(atMinute: now.minuteOfHour) ?? plan.actions.last,
+            runtime.currentAction != action
+        {
+            runtime.currentAction = action
+            events.append(.acted(agent: id, action: action, at: now))
+            observe(&runtime, "\(action.event.subject) \(action.event.predicate) \(action.event.object)", poignancy: 2)
+            if action.location != runtime.location {
+                // Travel is abstract: one tick on the way, then arrival. The position log shows
+                // the origin until then.
+                let minutes = world.travelMinutes(from: runtime.location, to: action.location)
+                runtime.travel = (to: action.location, arrives: now.advanced(by: minutes))
+            } else {
+                runtime.travel = nil
+            }
         }
+        if let travel = runtime.travel, now >= travel.arrives {
+            runtime.travel = nil
+            runtime.location = travel.to
+            events.append(.moved(agent: id, to: travel.to, at: now))
+            let placeName = world.location(travel.to)?.name ?? travel.to.rawValue
+            let activity = runtime.currentAction?.activity ?? "be there"
+            observe(&runtime, "\(runtime.profile.name) arrived at \(placeName) to \(activity)", poignancy: 3)
+        }
+    }
+
+    /// Stores an observation with a default score and queues it for the batched rating. With
+    /// `retained`, a text stored within the last few memories is skipped (the paper's retention
+    /// rule); sightings of others pass `false` because `seen` already dedupes them.
+    private func observe(_ runtime: inout AgentRuntime, _ text: String, poignancy: Int, retained: Bool = true) {
+        if retained, runtime.memory.recentlyContains(text, within: configuration.perceptionRetention) {
+            return
+        }
+        let node = runtime.memory.append(
+            kind: .observation, text: text, poignancy: poignancy, provenance: .observed,
+            embedding: embedder.embed(text), at: now)
+        runtime.pendingPoignancy.append(node.id)
     }
 
     // MARK: - Perception and conversation
@@ -285,25 +353,27 @@ public actor Simulation {
         Dictionary(grouping: order) { agents[$0]?.location ?? LocationID("unknown") }
     }
 
-    /// Each agent notices what co-located agents are doing, once per distinct activity.
+    /// Each awake agent notices what co-located agents are doing, once per distinct activity
+    /// while they stay together; parting and meeting again makes the same activity new.
     private func perceive() {
         let grouped = groupedByLocation()
-        for location in grouped.keys.sorted() {
-            guard let ids = grouped[location], ids.count > 1 else { continue }
-            for id in ids {
-                guard var runtime = agents[id] else { continue }
-                for other in ids where other != id {
-                    guard let otherRuntime = agents[other], let action = otherRuntime.currentAction else { continue }
-                    guard runtime.seen[other] != action.activity else { continue }
-                    runtime.seen[other] = action.activity
-                    let text = "\(runtime.profile.name) saw \(otherRuntime.profile.name) \(action.activity)"
-                    let node = runtime.memory.append(
-                        kind: .observation, text: text, poignancy: 2, provenance: .observed,
-                        embedding: embedder.embed(text), at: now)
-                    runtime.pendingPoignancy.append(node.id)
-                }
+        for id in order {
+            guard var runtime = agents[id] else { continue }
+            let here = grouped[runtime.location] ?? []
+            runtime.seen = runtime.seen.filter { here.contains($0.key) }
+            guard isAwake(runtime) else {
                 agents[id] = runtime
+                continue
             }
+            for other in here where other != id {
+                guard let otherRuntime = agents[other], let action = otherRuntime.currentAction else { continue }
+                guard runtime.seen[other] != action.activity else { continue }
+                runtime.seen[other] = action.activity
+                observe(
+                    &runtime, "\(runtime.profile.name) saw \(otherRuntime.profile.name) \(action.activity)",
+                    poignancy: 2, retained: false)
+            }
+            agents[id] = runtime
         }
     }
 
@@ -318,21 +388,40 @@ public actor Simulation {
         return true
     }
 
-    /// Rules, not a model call: co-located, awake, not in cooldown, under the daily cap.
+    /// Strangers meet in public; at a private place one of the two has to know the other.
+    private func mayMeet(_ a: AgentID, _ b: AgentID, at location: LocationID) -> Bool {
+        if world.location(location)?.isPublic ?? false { return true }
+        guard let profileA = agents[a]?.profile, let profileB = agents[b]?.profile else { return false }
+        return profileA.relationships[b] != nil || profileB.relationships[a] != nil
+    }
+
+    /// Rules, not a model call: co-located, awake, not in cooldown, under the daily cap, and
+    /// allowed to meet there. One pair per place per tick, chosen with the seeded generator.
     private func converseWhereColocated() async throws {
         let grouped = groupedByLocation()
         for location in grouped.keys.sorted() {
             guard let ids = grouped[location], ids.count > 1 else { continue }
-            let eligible = ids.filter { canTalk($0) }
+            let eligible = ids.filter { canTalk($0) }.shuffled(using: &rng)
             guard eligible.count >= 2 else { continue }
-            try await converse(eligible[0], eligible[1], at: location)
+            var pair: (AgentID, AgentID)?
+            outer: for (index, a) in eligible.enumerated() {
+                for b in eligible[(index + 1)...] where mayMeet(a, b, at: location) {
+                    pair = (a, b)
+                    break outer
+                }
+            }
+            guard let (a, b) = pair else { continue }
+            try await converse(a, b, at: location)
         }
     }
 
     private func converse(_ a: AgentID, _ b: AgentID, at location: LocationID) async throws {
         guard var runtimeA = agents[a], var runtimeB = agents[b] else { return }
-        let contextA = makeContext(for: &runtimeA, query: "talking with \(runtimeB.profile.name)")
-        let contextB = makeContext(for: &runtimeB, query: "talking with \(runtimeA.profile.name)")
+        // The focal point is the other person: what they are about surfaces memories about them.
+        let contextA = makeContext(
+            for: &runtimeA, query: "talking with \(runtimeB.profile.name). \(runtimeB.profile.currently)")
+        let contextB = makeContext(
+            for: &runtimeB, query: "talking with \(runtimeA.profile.name). \(runtimeA.profile.currently)")
         runtimeA.lastConversation = now
         runtimeB.lastConversation = now
         runtimeA.conversationsToday += 1
@@ -344,13 +433,17 @@ public actor Simulation {
             initiator: contextA, partner: contextB, maxTurns: configuration.maxConversationTurns)
         do {
             let response = try await brain.converse(request)
-            record(.converse, a, response.receipt)
+            // One call, half on each participant's day: the budget is a per-agent worst case.
+            budget.record(.converse, agents: [a, b], day: now.day, receipt: response.receipt)
             var conversation = response.value
             conversation.initiator = a
             conversation.partner = b
             conversation.turns = Array(conversation.turns.prefix(configuration.maxConversationTurns))
             conversation.conveyedStorylines = conversation.conveyedStorylines.filter { storylines[$0] != nil }
-            conversation.acts = conversation.acts.filter { ($0.from == a || $0.from == b) && $0.from != $0.to }
+            let participants: Set<AgentID> = [a, b]
+            conversation.acts = conversation.acts.filter {
+                participants.contains($0.from) && participants.contains($0.to) && $0.from != $0.to
+            }
             events.append(.conversed(conversation, at: now, location: location))
             remember(conversation, for: a, toldBy: b, summary: conversation.initiatorSummary)
             remember(conversation, for: b, toldBy: a, summary: conversation.partnerSummary)
@@ -367,6 +460,31 @@ public actor Simulation {
             kind: .chat, text: summary, poignancy: 5, provenance: provenance,
             storylines: Set(conversation.conveyedStorylines), embedding: embedder.embed(summary), at: now)
         runtime.pendingPoignancy.append(node.id)
+
+        // Social acts leave traces the agent can act on later: an accepted invitation becomes a
+        // plan (so a real model has something to follow), an invitation sent is remembered.
+        for act in conversation.acts where act.from == id {
+            guard let storylineID = act.storyline, let storyline = storylines[storylineID] else { continue }
+            let otherName = agents[act.to]?.profile.name ?? act.to.rawValue
+            switch act.kind {
+            case .accept:
+                guard let time = storyline.eventTime, let venue = storyline.targetLocation else { continue }
+                let place = world.location(venue)?.name ?? venue.rawValue
+                let text = "\(runtime.profile.name) plans to go to \(storyline.title) at \(place) on \(time)"
+                let plan = runtime.memory.append(
+                    kind: .plan, text: text, poignancy: 6, provenance: provenance,
+                    storylines: [storylineID], embedding: embedder.embed(text), at: now)
+                runtime.pendingPoignancy.append(plan.id)
+            case .invite:
+                let text = "\(runtime.profile.name) invited \(otherName) to \(storyline.title)"
+                let invite = runtime.memory.append(
+                    kind: .observation, text: text, poignancy: 4, provenance: .observed,
+                    storylines: [storylineID], embedding: embedder.embed(text), at: now)
+                runtime.pendingPoignancy.append(invite.id)
+            default:
+                break
+            }
+        }
         agents[id] = runtime
     }
 
@@ -379,8 +497,8 @@ public actor Simulation {
         guard runtime.lastPoignancyKey != key else { return }
         runtime.lastPoignancyKey = key
 
-        let ids = runtime.pendingPoignancy
-        runtime.pendingPoignancy = []
+        let ids = Array(runtime.pendingPoignancy.prefix(configuration.maxPoignancyBatch))
+        runtime.pendingPoignancy.removeFirst(ids.count)
         let texts = ids.compactMap { memoryID in runtime.memory.nodes.first { $0.id == memoryID }?.text }
         agents[id] = runtime
         do {
@@ -392,26 +510,40 @@ public actor Simulation {
         }
     }
 
+    /// The paper's trigger (accumulated importance) behind two budget rules: a daily cap and a
+    /// minimum spacing. The focal point is what happened recently, so retrieval pulls the
+    /// memories those events relate to.
     private func reflectIfDue(_ id: AgentID) async throws {
         guard var runtime = agents[id], isAwake(runtime),
-            runtime.memory.importanceSinceReflection >= configuration.reflectionImportanceThreshold
+            runtime.memory.importanceSinceReflection >= configuration.reflectionImportanceThreshold,
+            runtime.reflectionsToday < configuration.maxReflectionsPerAgentDay
         else { return }
-        let context = makeContext(for: &runtime, query: "what \(runtime.profile.name) has learned recently")
+        if let last = runtime.lastReflection, now.minutes - last.minutes < configuration.reflectionSpacingMinutes {
+            return
+        }
+        let focal = runtime.memory.recent(10).map(\.text).joined(separator: " ")
+        let context = makeContext(for: &runtime, query: focal)
         runtime.memory.markReflected()
+        runtime.lastReflection = now
+        runtime.reflectionsToday += 1
         agents[id] = runtime
         do {
             let response = try await brain.reflect(context)
             record(.reflect, id, response.receipt)
             guard var updated = agents[id] else { return }
-            for reflection in response.value {
-                let storylines = Set(
-                    reflection.evidence.compactMap { evidenceID in
-                        updated.memory.nodes.first { $0.id == evidenceID }?.storylines
-                    }.flatMap { $0 })
-                updated.memory.append(
-                    kind: .reflection, text: reflection.insight, poignancy: 6,
+            for var reflection in response.value {
+                // Only memories this agent actually has can be evidence; an insight with none is dropped.
+                let cited = reflection.evidence.compactMap { evidenceID in
+                    updated.memory.nodes.first { $0.id == evidenceID }
+                }
+                guard !cited.isEmpty else { continue }
+                reflection.evidence = cited.map(\.id)
+                let storylines = Set(cited.flatMap(\.storylines))
+                let node = updated.memory.append(
+                    kind: .reflection, text: reflection.insight, poignancy: 5,
                     provenance: .reflected(from: reflection.evidence), storylines: storylines,
                     embedding: embedder.embed(reflection.insight), at: now)
+                updated.pendingPoignancy.append(node.id)
                 events.append(.reflected(agent: id, reflection: reflection, at: now))
             }
             agents[id] = updated

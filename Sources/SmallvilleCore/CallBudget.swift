@@ -14,8 +14,11 @@ public struct CallBudget: Sendable, Codable {
     public static let maxCallsPerAgentDay = 45
     public static let maxPromptTokens = 3000
 
-    public private(set) var callsByAgentDay: [String: Int] = [:]
+    /// Calls charged to each "agent/day". A call made for several agents (a conversation) is
+    /// split equally between them, so a share can be fractional.
+    public private(set) var callsByAgentDay: [String: Double] = [:]
     public private(set) var callsByKind: [String: Int] = [:]
+    public private(set) var totalCalls = 0
     public private(set) var totalInputTokens = 0
     public private(set) var totalOutputTokens = 0
     public private(set) var totalWallSeconds = 0.0
@@ -25,8 +28,19 @@ public struct CallBudget: Sendable, Codable {
     public init() {}
 
     public mutating func record(_ kind: BrainCallKind, agent: AgentID, day: Int, receipt: BrainCallReceipt) {
-        callsByAgentDay["\(agent.rawValue)/\(day)", default: 0] += 1
+        record(kind, agents: [agent], day: day, receipt: receipt)
+    }
+
+    /// One call on behalf of `agents`: counted once in the totals, an equal share on each
+    /// agent's day. The per-agent-day limit is a worst case, and every participant's device
+    /// would run the same inference.
+    public mutating func record(_ kind: BrainCallKind, agents: [AgentID], day: Int, receipt: BrainCallReceipt) {
+        let share = 1 / Double(max(1, agents.count))
+        for agent in agents {
+            callsByAgentDay["\(agent.rawValue)/\(day)", default: 0] += share
+        }
         callsByKind[kind.rawValue, default: 0] += 1
+        totalCalls += 1
         totalInputTokens += receipt.inputTokens
         totalOutputTokens += receipt.outputTokens
         totalWallSeconds += receipt.wallSeconds
@@ -37,9 +51,9 @@ public struct CallBudget: Sendable, Codable {
     }
 
     public func summary() -> BudgetSummary {
-        let totalCalls = callsByAgentDay.values.reduce(0, +)
         let agentDays = callsByAgentDay.count
-        let maxPerAgentDay = callsByAgentDay.values.max() ?? 0
+        // A half share rounds up: the limit is a ceiling, not a target.
+        let maxPerAgentDay = Int((callsByAgentDay.values.max() ?? 0).rounded(.up))
         let mean = agentDays == 0 ? 0 : Double(totalCalls) / Double(agentDays)
         return BudgetSummary(
             totalCalls: totalCalls,

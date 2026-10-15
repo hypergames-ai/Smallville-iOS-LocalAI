@@ -36,6 +36,24 @@ public struct WorldMap: Sendable, Codable {
         locations[id] != nil
     }
 
+    /// Maps what a brain called a place onto a real location: the exact id first, then a
+    /// case-insensitive name, then a sector if exactly one location has it. A lookup, not parsing.
+    public func resolve(_ raw: String) -> LocationID? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let exact = locations[LocationID(trimmed)] {
+            return exact.id
+        }
+        let byName = allLocations.filter { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
+        if let first = byName.first {
+            return first.id
+        }
+        let bySector = allLocations.filter { $0.sector.caseInsensitiveCompare(trimmed) == .orderedSame }
+        if bySector.count == 1, let only = bySector.first {
+            return only.id
+        }
+        return nil
+    }
+
     public var allLocations: [Location] {
         locations.values.sorted { $0.id < $1.id }
     }

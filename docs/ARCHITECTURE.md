@@ -27,10 +27,10 @@ Smallville's loop is kept, its call structure is not.
 | Perception | poignancy call per observation | observations appended with a default score; one batched `ratePoignancy` call every 4 waking hours | ~4 |
 | Reaction gating | model decides whether to react | rules: co-located, awake, cooldown, per-day cap | 0 |
 | Conversation | 1 call per utterance | 1 call → whole `Conversation` (turns, `SocialAct`s, conveyed storylines, two summaries) | ≤4 |
-| Reflection | several calls per trigger | 1 call when accumulated importance crosses a threshold → `[Reflection]` | ~2 |
+| Reflection | several calls per trigger | 1 call when accumulated importance crosses a threshold, at most 3 per day and ≥1 h apart → `[Reflection]` | ~2, cap 3 |
 | **Total** | 600–1,000 | | **~26, budget 45** |
 
-Every brain method returns `BrainResponse<T>` = value + `BrainCallReceipt` (tokens, wall time). `Simulation.record` feeds `CallBudget`; `budget.summary()` is the number the tests and the runner print.
+Every brain method returns `BrainResponse<T>` = value + `BrainCallReceipt` (tokens, wall time). `Simulation.record` feeds `CallBudget`; `budget.summary()` is the number the tests and the runner print. A conversation is one call in the totals and half a call on each participant's agent-day: the per-agent limit is a worst case, and either participant's device would run the same inference.
 
 ## Memory
 
@@ -54,7 +54,8 @@ Embeddings: `Embedder` protocol in the core; `HashingEmbedder` (bag of words, de
 - **knows** — agents with any memory tagged with the storyline
 - **diffusion** — edges from `.told(by:at:)` provenance
 - **invited / accepted** — `SocialAct`s in `.conversed` events with that storyline
-- **attended** — agents with a `PositionSample` at the storyline's `targetLocation` within ±60 min of `eventTime`
+- **attended** — agents with at least `minimumDwellSamples` (default 2, i.e. 20 min) `PositionSample`s at the storyline's `targetLocation` within ±60 min of `eventTime`. The host is included, not excluded; `Discovery.host` names them so the UI can label them.
+- **diffusion** edges are deduplicated to the earliest told-by time per (teller, listener) pair.
 
 A later "chronicler" pass (one call per game-hour over the compressed social-act log) will find unseeded headlines; it is deliberately not in the skeleton.
 
@@ -74,7 +75,7 @@ Same (seed, whispers, brain) → identical `events`. Dictionaries are iterated t
 
 ## The app
 
-`SimulationController` (`@MainActor @Observable`) owns a `Simulation` and advances it one game-hour at a time in a `Task`, publishing `Snapshot`s and `Discovery`s. The Town scene renders from snapshots only. The Discoveries list is a `NavigationStack` over `Discovery` with evidence drill-down. The Benchmark view exists so a human with a phone can produce numbers the agent can reason about.
+`SimulationController` (`@MainActor @Observable`) owns a `Simulation` and advances it one game-hour at a time in a `Task`, publishing `Snapshot`s and `Discovery`s. The Town scene renders from snapshots only. The Discoveries list is a `NavigationStack` over `Discovery` with evidence drill-down; attendance is shown with the host separated, as in "3 attended (host + 2)", using `Discovery.host` (view change planned for Phase 6). The Benchmark view exists so a human with a phone can produce numbers the agent can reason about.
 
 ## What is deliberately not here yet
 
