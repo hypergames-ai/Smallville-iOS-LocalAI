@@ -49,3 +49,7 @@ Argument parsing in the runner is hand-rolled rather than pulling swift-argument
 ## 12. Idle-game pacing is the product
 
 At ~45 calls per agent-day and 2–5 s per call, a 10-agent town is ~30 minutes of inference per game-day. The app is designed as an ant farm you check on, not a real-time game, and the sim runs only in the foreground (background inference is rate-limited by the OS).
+
+## 13. One fresh session per model call (supersedes the session clause of 7)
+
+Measured on macOS 27 (AFM 3 Core, 4,096-token context): a reused `LanguageModelSession` resends its whole transcript, so the same short prompt cost 161, 279, then 395 input tokens over three calls, while a fresh session stayed at 151; `cachedTokenCount` was 0 in every case. With real prompts of 1,000–1,500 tokens, a long-lived per-agent session crosses the 3,000-token budget by its second or third call, and the history it carries is what the memory stream already supplies. So every brain call starts a new session whose instructions are the agent's fixed persona, and the per-call cost is just instructions + prompt + schema + response. `prewarm` is not used (Apple advises it only with a second or more of lead time). A context overflow is retried once with half the retrieved memories; a second overflow is a `BrainError.malformed` and the simulation skips that decision. Revisit if a later OS reports cached prefix tokens across sessions.

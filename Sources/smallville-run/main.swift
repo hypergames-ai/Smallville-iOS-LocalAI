@@ -3,6 +3,7 @@
 //
 //   swift run smallville-run --minutes 2880 --agents 3 --seed 42
 //   swift run smallville-run --minutes 240 --agents 3 --fm         (Mac's on-device model)
+//   swift run smallville-run --minutes 240 --agents 3 --fm --conversations   (also print transcripts)
 //   swift run smallville-run --minutes 1440 --no-party --whisper "klaus: Klaus wants to ask Maria to the dance"
 //
 // `print` is allowed here and nowhere else in the package.
@@ -22,6 +23,7 @@ struct Options {
     var includeParty = true
     var whispers: [(AgentID, String)] = []
     var outputPath: String?
+    var printConversations = false
 
     static func parse(_ arguments: [String]) throws -> Options {
         var options = Options()
@@ -46,6 +48,8 @@ struct Options {
                 let agent = raw[..<colon].trimmingCharacters(in: .whitespaces)
                 let text = raw[raw.index(after: colon)...].trimmingCharacters(in: .whitespaces)
                 options.whispers.append((AgentID(agent), text))
+            case "--conversations":
+                options.printConversations = true
             case "--out":
                 options.outputPath = try required(iterator.next(), for: argument)
             case "--help", "-h":
@@ -64,7 +68,7 @@ struct Options {
 
     static let usageText = """
         usage: smallville-run [--minutes N] [--agents N] [--seed N] [--fm] [--no-party]
-                              [--whisper "agent: text"]... [--out path.json]
+                              [--whisper "agent: text"]... [--out path.json] [--conversations]
         """
 }
 
@@ -104,6 +108,41 @@ func makeBrain(_ options: Options) throws -> (any AgentBrain, String) {
     throw RunnerError.usage("--fm needs macOS 26 or later with Apple Intelligence enabled")
 }
 
+/// Every conversation as readable text: who, where, the turns, the social acts, what was conveyed.
+func transcripts(_ events: [SimEvent], names: [AgentID: String]) -> String {
+    func name(_ id: AgentID) -> String { names[id] ?? id.rawValue }
+    var blocks: [String] = []
+    for event in events {
+        guard case .conversed(let conversation, let at, let location) = event else { continue }
+        var lines = [
+            "--- \(at) @\(location.rawValue): \(name(conversation.initiator)) and \(name(conversation.partner))"
+        ]
+        lines += conversation.turns.map { "\(name($0.speaker)): \($0.text)" }
+        for act in conversation.acts {
+            let storyline = act.storyline.map { " [\($0.rawValue)]" } ?? ""
+            lines.append("  act: \(act.kind.rawValue) \(name(act.from)) -> \(name(act.to)): \(act.topic)\(storyline)")
+        }
+        let conveyed = conversation.conveyedStorylines.map(\.rawValue).joined(separator: ", ")
+        lines.append("  conveyed: \(conveyed.isEmpty ? "none" : conveyed)")
+        lines.append("  \(name(conversation.initiator)) remembers: \(conversation.initiatorSummary)")
+        lines.append("  \(name(conversation.partner)) remembers: \(conversation.partnerSummary)")
+        blocks.append(lines.joined(separator: "\n"))
+    }
+    return blocks.isEmpty ? "(no conversations)" : blocks.joined(separator: "\n\n")
+}
+
+/// Failed brain calls grouped by kind and reason, most frequent first.
+func failureTally(_ events: [SimEvent]) -> [String] {
+    var counts: [String: Int] = [:]
+    for event in events {
+        guard case .brainFailed(_, let kind, let reason, _) = event else { continue }
+        counts["\(kind.rawValue): \(reason)", default: 0] += 1
+    }
+    return counts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.map {
+        "\($0.value)x \($0.key)"
+    }
+}
+
 let valentinesParty = Storyline(
     id: StorylineID("valentines-party"),
     title: "Valentine's Day party at Hobbs Cafe",
@@ -141,11 +180,22 @@ do {
     for _ in 0..<hours {
         try await simulation.run(minutes: 60)
         let snapshot = await simulation.snapshot()
-        let where_ = snapshot.agents.map { "\($0.name.split(separator: " ").first ?? "?") \($0.emoji) @\($0.location.rawValue)" }
+        let where_ = snapshot.agents.map {
+            "\($0.name.split(separator: " ").first ?? "?") \($0.emoji) @\($0.location.rawValue)"
+        }
         print("\(snapshot.now)  calls=\(snapshot.budget.totalCalls)  \(where_.joined(separator: "  "))")
     }
 
     let snapshot = await simulation.snapshot()
+    let events = await simulation.events
+    if options.printConversations {
+        let names = Dictionary(profiles.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        print(transcripts(events, names: names))
+    }
+    let failures = failureTally(events)
+    if !failures.isEmpty {
+        print("brain failures by kind and reason:\n  " + failures.joined(separator: "\n  "))
+    }
     let report = Report(
         gameMinutes: hours * 60, agents: profiles.count, seed: options.seed, brain: brainName,
         budget: snapshot.budget, brainFailures: snapshot.brainFailures, eventCount: snapshot.eventCount,
