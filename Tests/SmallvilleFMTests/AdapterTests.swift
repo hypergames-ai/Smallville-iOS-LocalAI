@@ -161,6 +161,29 @@ struct PromptTests {
         }
     }
 
+    @Test("the day-plan prompt names the profile's workplace, favorite spot and home")
+    func dayPlanNamesUsualPlaces() throws {
+        let prompt = Prompts.dayPlan(try Fixtures.context(.maria, knownLocations: Fixtures.world.allLocations))
+        for name in ["Oak Hill College library", "Hobbs Cafe", "Maria's dorm room"] {
+            #expect(prompt.contains(name), "\(name)")
+        }
+    }
+
+    @Test("the hour-plan prompt marks the agent's own places and the storyline venue")
+    func hourPlanTagsRoles() throws {
+        let context = try Fixtures.context(
+            .maria, knownLocations: Fixtures.world.allLocations, storylines: [Fixtures.party])
+        let prompt = Prompts.hourPlan(context, dayPlan: DayPlan(wakeHour: 9, entries: []))
+        #expect(prompt.contains("the_ville:oak_hill_library (Oak Hill College library, workplace)"))
+        #expect(prompt.contains("the_ville:hobbs_cafe (Hobbs Cafe, favorite spot, storyline venue)"))
+        #expect(prompt.contains("the_ville:dorm_maria (Maria's dorm room, home)"))
+        #expect(prompt.contains("the_ville:johnson_park (Johnson Park)"), "a place that is nothing to her is untagged")
+        #expect(
+            Prompts.roles(of: WorldMap.hobbsCafe, in: try Fixtures.context(.isabella)) == [
+                "workplace", "favorite spot",
+            ])
+    }
+
     @Test("a conversation prompt gives the partner one memory fewer and names both speakers in full")
     func conversation() throws {
         let request = ConversationRequest(

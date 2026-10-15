@@ -23,6 +23,9 @@ enum Prompts {
     static func dayPlan(_ context: AgentContext, memoryLimit: Int = defaultMemoryLimit) -> String {
         """
         It is \(context.now). Write \(context.profile.name)'s plan for today as an hour-by-hour outline.
+        \(usualPlaces(context))
+        Say where each entry happens. Unless memories say otherwise, work or study at the workplace, take meals \
+        and breaks at the favorite spot, and be home at night.
         \(memoryBlock(context, limit: memoryLimit))
         """
     }
@@ -37,6 +40,8 @@ enum Prompts {
             \(locationBlock(context))
             \(storylineBlock(context))
             \(memoryBlock(context, limit: memoryLimit))
+            Do this hour's task where it says. Otherwise: a storyline event at its venue and time, work or study at \
+            the workplace, meals and breaks at the favorite spot, home at night.
             Decide what \(context.profile.name) does for the next hour.
             """
     }
@@ -81,8 +86,32 @@ enum Prompts {
     private static func locationBlock(_ context: AgentContext) -> String {
         // The same fallback as Mapping.locationIDs, so the prompt lists exactly the schema's choices.
         let known = context.knownLocations.isEmpty ? [context.location] : context.knownLocations
-        let places = known.map { "\($0.id.rawValue) (\($0.name))" }.joined(separator: ", ")
-        return "Known locations: \(places)"
+        let places = known.map { location -> String in
+            let tags = ([location.name] + roles(of: location.id, in: context)).joined(separator: ", ")
+            return "\(location.id.rawValue) (\(tags))"
+        }
+        return "Known locations, \(context.profile.name)'s own marked: " + places.joined(separator: "; ")
+    }
+
+    /// What a place is to this agent, from its profile and the storylines it knows.
+    static func roles(of id: LocationID, in context: AgentContext) -> [String] {
+        let profile = context.profile
+        var roles: [String] = []
+        if id == profile.workplace { roles.append("workplace") }
+        if id == profile.favoriteSpot { roles.append("favorite spot") }
+        if id == profile.home { roles.append("home") }
+        if context.activeStorylines.contains(where: { $0.targetLocation == id }) { roles.append("storyline venue") }
+        return roles
+    }
+
+    /// The profile's workplace, favorite spot and home by name, so a day plan can say where things happen.
+    private static func usualPlaces(_ context: AgentContext) -> String {
+        func name(_ id: LocationID) -> String {
+            (context.knownLocations + [context.location]).first { $0.id == id }?.name ?? id.rawValue
+        }
+        let profile = context.profile
+        return "Usual places: works at \(name(profile.workplace)); favorite spot \(name(profile.favoriteSpot)); "
+            + "home \(name(profile.home))."
     }
 
     private static func storylineBlock(_ context: AgentContext) -> String {
