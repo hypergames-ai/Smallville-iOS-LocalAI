@@ -2,7 +2,7 @@
 #   cd App && xcodegen generate
 name: Smallville
 options:
-  bundleIdPrefix: com.example            # change to yours
+  bundleIdPrefix: com.smallville.mm            # change to yours
   deploymentTarget:
     iOS: "27.0"
   xcodeVersion: "27.0"
