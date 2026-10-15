@@ -45,6 +45,29 @@ struct DynamicSchemaTests {
         #expect(turns["maxItems"] as? Int == 1)
     }
 
+    @Test(
+        "no array is bounded 0...1, which the on-device model fails on",
+        arguments: [0, 1, 3], [0, 1, 2, 6])
+    func noZeroToOneArrays(storylineCount: Int, maxTurns: Int) throws {
+        let ids = (0..<storylineCount).map { "storyline-\($0)" }
+        let conversation = try DynamicSchemas.conversation(names: ["A", "B"], storylineIDs: ids, maxTurns: maxTurns)
+        let hourPlan = try DynamicSchemas.hourPlan(locationIDs: ["the_ville:hobbs_cafe"])
+        let arrays = [
+            ("turns", conversation), ("acts", conversation), ("conveyedStorylineIDs", conversation),
+            ("actions", hourPlan),
+        ]
+        for (property, schema) in arrays {
+            let node = try Fixtures.node(for: property, in: schema)
+            let maxItems = try #require(node["maxItems"] as? Int, "\(property) is bounded")
+            let minItems = node["minItems"] as? Int ?? 0
+            #expect(!(minItems == 0 && maxItems == 1), "\(property): \(storylineCount) storylines, \(maxTurns) turns")
+        }
+        let conveyed = try Fixtures.node(for: "conveyedStorylineIDs", in: conversation)
+        #expect(
+            conveyed["maxItems"] as? Int == max(DynamicSchemas.minimumArrayCeiling, storylineCount + 1),
+            "every choice can still be listed")
+    }
+
     @Test("storylines either participant knows are offered once each")
     func storylinesFromBothSides() throws {
         let other = Storyline(
@@ -101,6 +124,18 @@ struct MappingTests {
         #expect(conversation.acts.map(\.storyline) == [StorylineID("valentines-party"), nil])
         #expect(conversation.conveyedStorylines == [StorylineID("valentines-party")])
         #expect(conversation.initiatorSummary == "I invited Maria.")
+    }
+
+    @Test("with nothing in play the model may list none twice; that conveys nothing")
+    func conveyedNoneOnly() throws {
+        let generated = try Fixtures.decode(
+            GeneratedConversation.self,
+            """
+            {"turns": [{"speaker": "Klaus Mueller", "text": "Hi"}, {"speaker": "Maria Lopez", "text": "Hey"}],
+             "acts": [], "conveyedStorylineIDs": ["none", "none"],
+             "initiatorSummary": "We said hi.", "partnerSummary": "We said hi."}
+            """)
+        #expect(Mapping.conversation(generated, initiator: .klaus, partner: .maria).conveyedStorylines.isEmpty)
     }
 
     @Test("a day plan maps entry by entry")

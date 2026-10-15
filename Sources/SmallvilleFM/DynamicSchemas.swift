@@ -11,6 +11,14 @@ enum DynamicSchemas {
     /// The storyline choice that means "no storyline"; dropped when mapping.
     static let noStoryline = "none"
 
+    /// The smallest `maximumElements` an optional array may have; `conveyedStorylineIDs` is the
+    /// only array that could otherwise shrink to one (`turns` and `acts` are safe by construction).
+    /// On macOS 27 (AFM 3 Core) an array bounded 0...1 fails every call with `LanguageModelError`
+    /// -1 (ModelManagerError 1032); 0...2, 1...1 and 2...2 work.
+    // VERIFY: probed on macOS 27 / AFM 3 Core only, not documented; re-probe 0...1 on an iOS 27
+    // device and later model builds before relaxing this.
+    static let minimumArrayCeiling = 2
+
     /// `GeneratedHourPlan` with `locationID` limited to `locationIDs`, which must not be empty.
     static func hourPlan(locationIDs: [String]) throws -> GenerationSchema {
         let action = DynamicGenerationSchema(
@@ -69,7 +77,7 @@ enum DynamicSchemas {
                     "conveyedStorylineIDs", "Storylines mentioned, or none",
                     DynamicGenerationSchema(
                         arrayOf: choice("ConveyedStoryline", storylines), minimumElements: 0,
-                        maximumElements: storylines.count)),
+                        maximumElements: max(minimumArrayCeiling, storylines.count))),
                 property(
                     "initiatorSummary", "One-sentence memory of the chat from the first speaker's point of view",
                     string),
