@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(swift build:*)",
+      "Bash(swift test:*)",
+      "Bash(swift run:*)",
+      "Bash(swift package:*)",
+      "Bash(swift format:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(xcodegen:*)",
+      "Bash(xcodebuild -list:*)",
+      "Bash(xcrun simctl list:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)"
+    ],
+    "ask": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(rm:*)",
+      "Bash(scripts/fetch-assets.sh:*)"
+    ],
+    "deny": [
+      "Read(./Assets/ThirdParty/**)",
+      "Edit(./App/Smallville.xcodeproj/**)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/format-swift.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

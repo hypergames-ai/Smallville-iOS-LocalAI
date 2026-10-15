@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core-tests:
+    # The core and its tests are model-free and deterministic, so they run on a hosted Mac.
+    # Hosted runners may lag the Xcode version; the package builds with Xcode 26.x or later.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select newest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+      - run: swift --version
+      - run: swift build
+      - run: swift test
+      - name: Headless simulation (stub brain)
+        run: swift run smallville-run --minutes 2880 --agents 3 --out runs/ci.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sim-report
+          path: runs/ci.json
