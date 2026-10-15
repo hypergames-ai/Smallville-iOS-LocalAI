@@ -11,7 +11,8 @@ struct DiscoveriesView: View {
                 if controller.discoveries.isEmpty {
                     ContentUnavailableView(
                         "Nothing yet", systemImage: "sparkles",
-                        description: Text("Start the simulation from the Town tab. Discoveries appear as storylines spread."))
+                        description: Text(
+                            "Start the simulation from the Town tab. Discoveries appear as storylines spread."))
                 } else {
                     List(controller.discoveries) { discovery in
                         NavigationLink(value: discovery) {
@@ -41,6 +42,7 @@ struct DiscoveryDetailView: View {
 
     var body: some View {
         List {
+            Text(discovery.title).font(.headline)
             Section("Who knows") {
                 ForEach(discovery.knows, id: \.self) { agent in
                     NavigationLink(controller.name(of: agent)) {
@@ -62,10 +64,12 @@ struct DiscoveryDetailView: View {
                 LabeledContent("Showed up", value: names(discovery.attended))
             }
         }
-        .navigationTitle(discovery.title)
+        .navigationTitle("Discovery")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ShareLink(item: exportText) { Label("Report", systemImage: "square.and.arrow.up") }
+            ToolbarItem(placement: .topBarTrailing) {
+                ShareLink(item: exportText) { Label("Report", systemImage: "square.and.arrow.up") }
+            }
         }
     }
 

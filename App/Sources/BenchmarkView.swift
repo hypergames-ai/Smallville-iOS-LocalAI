@@ -22,7 +22,8 @@ struct BenchmarkView: View {
                         LabeledContent("Reason", value: reason)
                     }
                     LabeledContent("Variant", value: controller.modelInfo.variantName ?? "unknown (iOS 26)")
-                    LabeledContent("Context", value: controller.modelInfo.contextSize.map { "\($0) tokens" } ?? "unknown")
+                    LabeledContent(
+                        "Context", value: controller.modelInfo.contextSize.map { "\($0) tokens" } ?? "unknown")
                 }
                 Section("Run") {
                     Stepper("Calls per kind: \(callsPerKind)", value: $callsPerKind, in: 5...50, step: 5)
@@ -32,22 +33,31 @@ struct BenchmarkView: View {
                 }
                 if !results.isEmpty {
                     Section("Results") {
-                        ForEach(BrainCallKind.allCases.filter { kind in results.contains { $0.kind == kind.rawValue } }, id: \.self) { kind in
+                        ForEach(
+                            BrainCallKind.allCases.filter { kind in results.contains { $0.kind == kind.rawValue } },
+                            id: \.self
+                        ) { kind in
                             let rows = results.filter { $0.kind == kind.rawValue && $0.ok }
                             let sorted = rows.map(\.wallSeconds).sorted()
                             let p50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2]
-                            let p95 = sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
-                            LabeledContent(kind.rawValue, value: String(format: "p50 %.2fs · p95 %.2fs · %d ok", p50, p95, rows.count))
+                            let p95 =
+                                sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+                            LabeledContent(
+                                kind.rawValue,
+                                value: String(format: "p50 %.2fs · p95 %.2fs · %d ok", p50, p95, rows.count))
                         }
                     }
                 }
                 if let fileURL {
                     Section {
-                        ShareLink(item: fileURL) { Label("Share smallville.benchmark.json", systemImage: "square.and.arrow.up") }
+                        ShareLink(item: fileURL) {
+                            Label("Share smallville.benchmark.json", systemImage: "square.and.arrow.up")
+                        }
                     }
                 }
             }
             .navigationTitle("Benchmark")
+            .onAppear { controller.refreshModelInfo() }
         }
     }
 
@@ -57,7 +67,8 @@ struct BenchmarkView: View {
         results = []
         defer { isRunning = false }
 
-        let info = controller.modelInfo
+        // Probe at run time so the benchmark file records the model as it was for these calls.
+        let info = controller.refreshModelInfo()
         var collected: [BenchmarkResult] = []
         if info.isAvailable {
             let brain = FoundationModelsBrain()
@@ -66,7 +77,8 @@ struct BenchmarkView: View {
             let dayPlan = DayPlan(wakeHour: 6, entries: [DayPlanEntry(hour: 9, activity: "open the cafe")])
             for index in 0..<callsPerKind {
                 status = "planHour \(index + 1)/\(callsPerKind)"
-                collected.append(await measure(.planHour) { try await brain.planHour(sample, dayPlan: dayPlan).receipt })
+                collected.append(
+                    await measure(.planHour) { try await brain.planHour(sample, dayPlan: dayPlan).receipt })
             }
             let partner = sampleContext(world: world, profile: .klaus)
             let request = ConversationRequest(initiator: sample, partner: partner, maxTurns: 6)
@@ -93,7 +105,9 @@ struct BenchmarkView: View {
         } catch {
             let elapsed = clock.now - start
             let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-            return BenchmarkResult(kind: kind.rawValue, inputTokens: 0, outputTokens: 0, wallSeconds: seconds, ok: false, error: String(describing: error))
+            return BenchmarkResult(
+                kind: kind.rawValue, inputTokens: 0, outputTokens: 0, wallSeconds: seconds, ok: false,
+                error: String(describing: error))
         }
     }
 
@@ -107,7 +121,9 @@ struct BenchmarkView: View {
         ]
         var stream = MemoryStream()
         for text in texts {
-            stream.append(kind: .observation, text: text, poignancy: 4, provenance: .observed, embedding: embedder.embed(text), at: now)
+            stream.append(
+                kind: .observation, text: text, poignancy: 4, provenance: .observed, embedding: embedder.embed(text),
+                at: now)
         }
         let location = world.location(profile.workplace) ?? world.allLocations[0]
         return AgentContext(

@@ -19,7 +19,7 @@ struct TownView: View {
 
                 if let snapshot = controller.snapshot {
                     Text(
-                        "\(snapshot.now)  ·  \(snapshot.budget.totalCalls) calls  ·  \(snapshot.eventCount) events  ·  \(snapshot.brainFailures) failures"
+                        "\(snapshot.now)  ·  \(snapshot.budget.totalCalls) calls  ·  \(snapshot.eventCount) events  ·  \(snapshot.brainFailures) failures  ·  \(controller.conversationCount) conversations"
                     )
                     .font(.footnote.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -51,7 +51,8 @@ struct TownView: View {
             }
             .padding(.vertical)
             .navigationTitle("Smallville")
-            .onChange(of: controller.snapshot?.now) {
+            // `initial: true` draws the current snapshot when the tab first appears, even after a run has ended.
+            .onChange(of: controller.snapshot?.now, initial: true) {
                 if let snapshot = controller.snapshot {
                     scene.render(snapshot, world: .smallvilleSubset())
                 }
@@ -62,12 +63,33 @@ struct TownView: View {
 
 /// Draws locations as labeled boxes and agents as emoji inside them.
 final class TownScene: SKScene {
-    override func didMove(to view: SKView) {
-        backgroundColor = SKColor(red: 0.93, green: 0.90, blue: 0.82, alpha: 1)
+    /// The last snapshot drawn, kept so a size change can redraw it.
+    private var lastSnapshot: Simulation.Snapshot?
+    private var lastWorld: WorldMap?
+
+    override init(size: CGSize) {
+        super.init(size: size)
         scaleMode = .resizeFill
+        backgroundColor = SKColor(red: 0.93, green: 0.90, blue: 0.82, alpha: 1)
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        super.init(coder: aDecoder)
+        scaleMode = .resizeFill
+        backgroundColor = SKColor(red: 0.93, green: 0.90, blue: 0.82, alpha: 1)
+    }
+
+    /// `.resizeFill` resizes the scene to the view whenever the view's size settles, so redraw then
+    /// instead of depending on whether the first snapshot arrived before or after layout.
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        guard size != oldSize, let lastSnapshot, let lastWorld else { return }
+        render(lastSnapshot, world: lastWorld)
     }
 
     func render(_ snapshot: Simulation.Snapshot, world: WorldMap) {
+        lastSnapshot = snapshot
+        lastWorld = world
         removeAllChildren()
         let locations = world.allLocations
         let columns = 2

@@ -17,6 +17,8 @@ final class SimulationController {
 
     private(set) var snapshot: Simulation.Snapshot?
     private(set) var discoveries: [Discovery] = []
+    /// Conversations held so far this run, counted from `.conversed` events (the snapshot has no count).
+    private(set) var conversationCount = 0
     private(set) var isRunning = false
     private(set) var lastError: String?
     var brainChoice: BrainChoice = .stub
@@ -28,7 +30,9 @@ final class SimulationController {
         get { brainChoice == .onDevice }
         set { brainChoice = newValue ? .onDevice : .stub }
     }
-    let modelInfo = OnDeviceModelInfo.probe()
+    /// The latest probe of the on-device model. Re-probed on demand because a probe taken at launch
+    /// on a fresh simulator can report a zero context size.
+    private(set) var modelInfo = OnDeviceModelInfo.probe()
 
     private var simulation: Simulation?
     private var task: Task<Void, Never>?
@@ -43,8 +47,16 @@ final class SimulationController {
         targetLocation: WorldMap.hobbsCafe,
         eventTime: SimTime(minutes: SimTime.minutesPerDay + 17 * 60))
 
+    /// Probes the on-device model again and publishes the result.
+    @discardableResult
+    func refreshModelInfo() -> OnDeviceModelInfo {
+        modelInfo = OnDeviceModelInfo.probe()
+        return modelInfo
+    }
+
     func start() {
         guard !isRunning else { return }
+        let modelInfo = refreshModelInfo()
         let brain: any AgentBrain
         switch brainChoice {
         case .stub:
@@ -61,6 +73,7 @@ final class SimulationController {
         self.simulation = simulation
         isRunning = true
         lastError = nil
+        conversationCount = 0
         // The sim only runs in the foreground; background inference is rate-limited by the system.
         UIApplication.shared.isIdleTimerDisabled = true
 
@@ -78,9 +91,14 @@ final class SimulationController {
                 }
                 let snapshot = await simulation.snapshot()
                 let discoveries = await simulation.discoveries()
+                let conversations = await simulation.events.reduce(0) { count, event in
+                    if case .conversed = event { return count + 1 }
+                    return count
+                }
                 await MainActor.run {
                     self?.snapshot = snapshot
                     self?.discoveries = discoveries
+                    self?.conversationCount = conversations
                 }
                 if let stopAfterMinutes, snapshot.now.minutes - startMinutes >= stopAfterMinutes { break }
             }
