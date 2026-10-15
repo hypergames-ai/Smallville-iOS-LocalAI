@@ -24,6 +24,10 @@ final class SimulationController {
     var brainChoice: BrainChoice = .stub
     /// When set, the run loop ends after this many game-minutes from the start (used by `-autorunMinutes`).
     var stopAfterMinutes: Int?
+    /// The pace: wall-clock seconds a game-hour takes at least; an hour that finishes sooner waits
+    /// out the rest. The default is the flat-out floor: much below it, quiet hours (night, the stub
+    /// brain) publish several snapshots in one frame. Read every hour, so a change applies mid-run.
+    var secondsPerGameHour = 0.25
 
     /// Toggle-friendly view of `brainChoice`; off means the deterministic stub brain.
     var useOnDeviceModel: Bool {
@@ -83,6 +87,7 @@ final class SimulationController {
             // The sim starts mid-morning, so the stop point is measured from the start, not from minute 0.
             let startMinutes = await simulation.now.minutes
             while !Task.isCancelled {
+                let started = ContinuousClock.now
                 do {
                     try await simulation.run(minutes: 60)
                 } catch {
@@ -101,6 +106,11 @@ final class SimulationController {
                     self?.conversationCount = conversations
                 }
                 if let stopAfterMinutes, snapshot.now.minutes - startMinutes >= stopAfterMinutes { break }
+                let remaining = .seconds(self?.secondsPerGameHour ?? 0) - (ContinuousClock.now - started)
+                if remaining > .zero {
+                    // Cancellation ends the sleep early; the loop condition then stops the run.
+                    try? await Task.sleep(for: remaining)
+                }
             }
             await MainActor.run {
                 self?.isRunning = false
