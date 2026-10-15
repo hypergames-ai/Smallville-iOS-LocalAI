@@ -27,10 +27,14 @@ struct TownView: View {
                 }
 
                 HStack {
-                    Picker("Brain", selection: $controller.brainChoice) {
-                        ForEach(SimulationController.BrainChoice.allCases) { Text($0.rawValue).tag($0) }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Toggle("On-device model", isOn: $controller.useOnDeviceModel)
+                            .disabled(controller.isRunning || !controller.modelInfo.isAvailable)
+                        if let reason = controller.modelInfo.unavailableReason {
+                            Text("Unavailable: \(reason)").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                    .disabled(controller.isRunning)
+                    .fixedSize()
                     Spacer()
                     Button(controller.isRunning ? "Stop" : "Start") {
                         if controller.isRunning {
@@ -73,7 +77,9 @@ final class TownScene: SKScene {
             let column = index % columns
             let row = index / columns
             let origin = CGPoint(x: CGFloat(column) * cellWidth, y: size.height - CGFloat(row + 1) * cellHeight)
-            let box = SKShapeNode(rect: CGRect(origin: origin, size: CGSize(width: cellWidth, height: cellHeight)).insetBy(dx: 6, dy: 6), cornerRadius: 8)
+            let box = SKShapeNode(
+                rect: CGRect(origin: origin, size: CGSize(width: cellWidth, height: cellHeight)).insetBy(dx: 6, dy: 6),
+                cornerRadius: 8)
             box.fillColor = location.isPublic ? SKColor(white: 1, alpha: 0.7) : SKColor(white: 1, alpha: 0.35)
             box.strokeColor = SKColor(white: 0.4, alpha: 0.6)
             addChild(box)

@@ -101,7 +101,7 @@ Using Apple's Evaluations framework, add an eval target that runs the Valentine'
 Model: `opusplan` in the CLI with XcodeBuildMCP, or Xcode's agent.
 
 ```
-Make the iOS app build and run on the iPhone 17 Pro simulator. Keep App/project.yml as the source of truth (regenerate with xcodegen; never edit the .xcodeproj). Wire SimulationController to run the stub brain by default with a toggle for the on-device model. The Discoveries tab must show the Valentine's discovery after one game-day of stub simulation, with drill-down to the evidence memories. Build and launch through XcodeBuildMCP and send me a screenshot of the Discoveries tab.
+Start in plan mode. Make the iOS app build and run on the iPhone 17 Pro simulator. Keep App/project.yml as the source of truth (regenerate with xcodegen; never edit the .xcodeproj). Wire SimulationController to run the stub brain by default with a toggle for the on-device model. The Discoveries tab must show the Valentine's discovery after one game-day of stub simulation, with drill-down to the evidence memories. Build and launch through XcodeBuildMCP and send me a screenshot of the Discoveries tab.
 ```
 
 ---

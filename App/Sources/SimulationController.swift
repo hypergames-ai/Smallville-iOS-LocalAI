@@ -20,6 +20,14 @@ final class SimulationController {
     private(set) var isRunning = false
     private(set) var lastError: String?
     var brainChoice: BrainChoice = .stub
+    /// When set, the run loop ends once sim time reaches this many minutes (used by `-autorunMinutes`).
+    var stopAfterMinutes: Int?
+
+    /// Toggle-friendly view of `brainChoice`; off means the deterministic stub brain.
+    var useOnDeviceModel: Bool {
+        get { brainChoice == .onDevice }
+        set { brainChoice = newValue ? .onDevice : .stub }
+    }
     let modelInfo = OnDeviceModelInfo.probe()
 
     private var simulation: Simulation?
@@ -56,6 +64,7 @@ final class SimulationController {
         // The sim only runs in the foreground; background inference is rate-limited by the system.
         UIApplication.shared.isIdleTimerDisabled = true
 
+        let stopAfterMinutes = self.stopAfterMinutes
         task = Task { [weak self] in
             await simulation.whisper(Self.valentinesParty)
             while !Task.isCancelled {
@@ -71,6 +80,7 @@ final class SimulationController {
                     self?.snapshot = snapshot
                     self?.discoveries = discoveries
                 }
+                if let stopAfterMinutes, snapshot.now.minutes >= stopAfterMinutes { break }
             }
             await MainActor.run {
                 self?.isRunning = false
