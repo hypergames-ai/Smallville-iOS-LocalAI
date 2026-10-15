@@ -1,0 +1,3 @@
+// Copy to Local.xcconfig (gitignored) and fill in your Apple Developer Team ID.
+// Needed only for running on a physical device; the simulator builds without it.
+DEVELOPMENT_TEAM = ABCDE12345

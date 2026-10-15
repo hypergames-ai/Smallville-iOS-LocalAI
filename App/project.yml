@@ -1,0 +1,50 @@
+# XcodeGen spec. This file is the source of truth; the .xcodeproj is generated and gitignored.
+#   cd App && xcodegen generate
+name: Smallville
+options:
+  bundleIdPrefix: com.example            # change to yours
+  deploymentTarget:
+    iOS: "27.0"
+  xcodeVersion: "27.0"
+  createIntermediateGroups: true
+  disabledValidations: [missingConfigFiles]   # Config/Local.xcconfig is gitignored
+
+packages:
+  SmallvilleKit:
+    path: ..
+
+targets:
+  Smallville:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      # Third-party art, fetched by scripts/fetch-assets.sh. Optional so a fresh clone still builds.
+      - path: ../Assets/ThirdParty
+        type: folder
+        buildPhase: resources
+        optional: true
+    dependencies:
+      - package: SmallvilleKit
+        product: SmallvilleCore
+      - package: SmallvilleKit
+        product: SmallvilleFM
+    configFiles:
+      Debug: Config/Local.xcconfig
+      Release: Config/Local.xcconfig
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Smallville
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIRequiresFullScreen: true
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.smallville
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true

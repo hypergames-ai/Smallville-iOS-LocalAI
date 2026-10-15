@@ -1,0 +1,81 @@
+# Architecture
+
+## One sentence
+
+A pure-Swift simulation core (actors, value types, no model) asks a `Brain` for a small number of structured decisions per agent per game-hour, records everything it did in an event log, and a detector reads that log to find emergent social behavior.
+
+## Targets
+
+```
+SmallvilleCore      Simulation, MemoryStream, retrieval, StorylineDetector, StubBrain   (Foundation only)
+SmallvilleFM        FoundationModelsBrain: @Generable types, Prompts, session management (FoundationModels, NaturalLanguage)
+smallville-run      Headless CLI: runs N game-days, prints budget + discoveries JSON
+SmallvilleCoreTests Swift Testing, stub brain only
+App/                SwiftUI shell: Town (SpriteKit), Discoveries (nav list), Benchmark
+```
+
+Dependency direction is strictly downward: App → FM → Core. The core never imports anything above it.
+
+## The cognitive loop (per agent)
+
+Smallville's loop is kept, its call structure is not.
+
+| Stage | Original (reverie) | Here | Calls/agent-day |
+| --- | --- | --- | --- |
+| Day plan | 1 call + hourly decomposition calls | 1 call at wake → `DayPlan` | 1 |
+| Hour plan | ~8 calls per action (task decomposition, sector, arena, object, emoji, triple, state) | 1 call per waking hour → `HourPlan` with 1–3 `PlannedAction`s, each carrying location, emoji and event triple | ~15 |
+| Perception | poignancy call per observation | observations appended with a default score; one batched `ratePoignancy` call every 4 waking hours | ~4 |
+| Reaction gating | model decides whether to react | rules: co-located, awake, cooldown, per-day cap | 0 |
+| Conversation | 1 call per utterance | 1 call → whole `Conversation` (turns, `SocialAct`s, conveyed storylines, two summaries) | ≤4 |
+| Reflection | several calls per trigger | 1 call when accumulated importance crosses a threshold → `[Reflection]` | ~2 |
+| **Total** | 600–1,000 | | **~26, budget 45** |
+
+Every brain method returns `BrainResponse<T>` = value + `BrainCallReceipt` (tokens, wall time). `Simulation.record` feeds `CallBudget`; `budget.summary()` is the number the tests and the runner print.
+
+## Memory
+
+`MemoryStream` is an append-only array of `MemoryNode` (kind, text, poignancy 1–10, embedding, `Provenance`, `storylines`). Retrieval is the paper's score: normalized recency (exponential decay on last access) + importance + relevance (cosine), top-k, and it touches `lastAccessed`.
+
+`Provenance` is the part the original didn't have and this project is built around:
+
+- `.observed` — the agent saw it
+- `.told(by:at:)` — another agent conveyed it in a conversation
+- `.reflected(from:)` — synthesized from other nodes
+- `.whispered` — the player planted it
+
+A `Storyline` is a tagged seed (the Valentine's party). Conversation outputs list which storylines were conveyed; the receiver's chat memory gets `.told(by:)` and the storyline tag. "Who knows" is therefore a query, and "who told whom" is a graph.
+
+Embeddings: `Embedder` protocol in the core; `HashingEmbedder` (bag of words, deterministic) for tests and Linux; `NLSentenceEmbedder` (NaturalLanguage) in the FM target for devices.
+
+## Detection
+
+`StorylineDetector.detect` is a pure function of (memories, events, positions):
+
+- **knows** — agents with any memory tagged with the storyline
+- **diffusion** — edges from `.told(by:at:)` provenance
+- **invited / accepted** — `SocialAct`s in `.conversed` events with that storyline
+- **attended** — agents with a `PositionSample` at the storyline's `targetLocation` within ±60 min of `eventTime`
+
+A later "chronicler" pass (one call per game-hour over the compressed social-act log) will find unseeded headlines; it is deliberately not in the skeleton.
+
+## Time
+
+`SimTime` is minutes since start. One tick is 10 minutes. The sim starts Day 1 07:00. Hour boundaries trigger planning; day boundaries reset per-day counters. Agents sleep outside `[wakeHour, 22)` and make no calls while asleep.
+
+## Determinism
+
+Same (seed, whispers, brain) → identical `events`. Dictionaries are iterated through sorted keys or the `order` array. Ids are counters. The only RNG is `SeededRandom`. The FM brain is not deterministic (the model isn't), so determinism tests use the stub.
+
+## Budgets
+
+- ≤ 3,000 tokens per prompt, counted as instructions + prompt + schema + response
+- ≤ 45 calls per agent per game-day, mean over the run
+- `CallBudget` counts prompts over 3,000 as `overBudgetPrompts`; `withinBudget` is false if any exist or if any agent-day exceeds 45
+
+## The app
+
+`SimulationController` (`@MainActor @Observable`) owns a `Simulation` and advances it one game-hour at a time in a `Task`, publishing `Snapshot`s and `Discovery`s. The Town scene renders from snapshots only. The Discoveries list is a `NavigationStack` over `Discovery` with evidence drill-down. The Benchmark view exists so a human with a phone can produce numbers the agent can reason about.
+
+## What is deliberately not here yet
+
+Tiled map loading and pathfinding (positions are location ids, not tiles); a real "chronicler" detector; export/report bundles; adapters or evals. Each is a planned task in `docs/SETUP-CHECKLIST.md`.
