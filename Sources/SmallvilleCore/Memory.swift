@@ -51,6 +51,9 @@ public struct MemoryStream: Sendable, Codable {
     public private(set) var nodes: [MemoryNode] = []
     /// Sum of poignancy appended since the last reflection; drives the reflection trigger.
     public private(set) var importanceSinceReflection = 0
+    /// First node id appended after the last `markReflected()`: only nodes at or above it are
+    /// part of `importanceSinceReflection`.
+    private var reflectionWatermark = 0
     private var nextID = 0
 
     public init() {}
@@ -72,12 +75,19 @@ public struct MemoryStream: Sendable, Codable {
 
     public mutating func markReflected() {
         importanceSinceReflection = 0
+        reflectionWatermark = nextID
     }
 
+    /// Replaces default scores with rated ones. A memory added since the last reflection moves
+    /// the reflection trigger by the difference; an older one only changes its own score.
     public mutating func setPoignancy(_ updates: some Sequence<(Int, Int)>) {
         for (id, poignancy) in updates {
             guard let index = nodes.firstIndex(where: { $0.id == id }) else { continue }
-            nodes[index].poignancy = max(1, min(10, poignancy))
+            let rated = max(1, min(10, poignancy))
+            if id >= reflectionWatermark {
+                importanceSinceReflection += rated - nodes[index].poignancy
+            }
+            nodes[index].poignancy = rated
         }
     }
 

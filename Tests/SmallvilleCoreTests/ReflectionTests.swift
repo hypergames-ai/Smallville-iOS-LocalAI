@@ -121,4 +121,21 @@ struct ReflectionTests {
         let seen = await rated.values
         #expect(insights.allSatisfy { seen.contains($0) })
     }
+
+    @Test(
+        "real ratings, not default scores, decide whether the threshold is reached",
+        arguments: [(10, true), (1, false)])
+    func ratingsDriveTheThreshold(rating: Int, reflects: Bool) async throws {
+        // One agent alone stores ~10 memories a day: ~25 importance on default scores, ~15 rated 1,
+        // ~78 rated 10. A threshold of 40 is reached only when real ratings count.
+        let brain = ScriptedBrain(ratePoignancy: { texts, _ in texts.map { _ in rating } })
+        var configuration = Simulation.Configuration()
+        configuration.reflectionImportanceThreshold = 40
+        let simulation = Simulation(
+            world: .smallvilleSubset(), profiles: [.isabella], brain: brain, configuration: configuration)
+        try await simulation.run(minutes: SimTime.minutesPerDay)
+
+        let reflections = Self.reflections(of: AgentProfile.isabella.id, in: await simulation.events)
+        #expect(reflections.isEmpty != reflects, "rating \(rating)")
+    }
 }

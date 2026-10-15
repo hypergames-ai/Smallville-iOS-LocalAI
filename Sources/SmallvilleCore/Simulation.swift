@@ -349,8 +349,11 @@ public actor Simulation {
 
     // MARK: - Perception and conversation
 
+    /// Who is present where. An agent on the way somewhere is nowhere: still logged at the place
+    /// it left (the position log is unchanged), but it neither perceives nor talks there.
     private func groupedByLocation() -> [LocationID: [AgentID]] {
-        Dictionary(grouping: order) { agents[$0]?.location ?? LocationID("unknown") }
+        let present = order.filter { agents[$0]?.travel == nil }
+        return Dictionary(grouping: present) { agents[$0]?.location ?? LocationID("unknown") }
     }
 
     /// Each awake agent notices what co-located agents are doing, once per distinct activity
@@ -359,7 +362,7 @@ public actor Simulation {
         let grouped = groupedByLocation()
         for id in order {
             guard var runtime = agents[id] else { continue }
-            let here = grouped[runtime.location] ?? []
+            let here = runtime.travel == nil ? grouped[runtime.location] ?? [] : []
             runtime.seen = runtime.seen.filter { here.contains($0.key) }
             guard isAwake(runtime) else {
                 agents[id] = runtime
@@ -431,30 +434,55 @@ public actor Simulation {
 
         let request = ConversationRequest(
             initiator: contextA, partner: contextB, maxTurns: configuration.maxConversationTurns)
+        // What each side knew before the conversation; provenance and act checks are judged against it.
+        let knewBefore: [AgentID: Set<StorylineID>] = [a: knownStorylines(of: a), b: knownStorylines(of: b)]
         do {
             let response = try await brain.converse(request)
             // One call, half on each participant's day: the budget is a per-agent worst case.
-            budget.record(.converse, agents: [a, b], day: now.day, receipt: response.receipt)
+            record(.converse, [a, b], response.receipt)
             var conversation = response.value
             conversation.initiator = a
             conversation.partner = b
             conversation.turns = Array(conversation.turns.prefix(configuration.maxConversationTurns))
             conversation.conveyedStorylines = conversation.conveyedStorylines.filter { storylines[$0] != nil }
             let participants: Set<AgentID> = [a, b]
-            conversation.acts = conversation.acts.filter {
-                participants.contains($0.from) && participants.contains($0.to) && $0.from != $0.to
+            conversation.acts = conversation.acts.filter { act in
+                guard participants.contains(act.from), participants.contains(act.to), act.from != act.to else {
+                    return false
+                }
+                // Nobody invites to something they had not heard of, and an acceptance answers
+                // someone who had; otherwise the model made the act up.
+                guard let storyline = act.storyline else { return true }
+                switch act.kind {
+                case .invite: return knewBefore[act.from]?.contains(storyline) ?? false
+                case .accept: return knewBefore[act.to]?.contains(storyline) ?? false
+                default: return true
+                }
             }
             events.append(.conversed(conversation, at: now, location: location))
-            remember(conversation, for: a, toldBy: b, summary: conversation.initiatorSummary)
-            remember(conversation, for: b, toldBy: a, summary: conversation.partnerSummary)
+            remember(
+                conversation, for: a, toldBy: b, summary: conversation.initiatorSummary, knewBefore: knewBefore[a] ?? []
+            )
+            remember(
+                conversation, for: b, toldBy: a, summary: conversation.partnerSummary, knewBefore: knewBefore[b] ?? [])
         } catch let error as BrainError {
             fail(a, .converse, error)
         }
     }
 
-    private func remember(_ conversation: Conversation, for id: AgentID, toldBy other: AgentID, summary: String) {
+    private func knownStorylines(of id: AgentID) -> Set<StorylineID> {
+        guard let memory = agents[id]?.memory else { return [] }
+        return Set(storylines.keys.filter { memory.knows($0) })
+    }
+
+    /// Stores one side of a conversation. Provenance is judged against `knewBefore`, never
+    /// against memory that this conversation has already added to.
+    private func remember(
+        _ conversation: Conversation, for id: AgentID, toldBy other: AgentID, summary: String,
+        knewBefore: Set<StorylineID>
+    ) {
         guard var runtime = agents[id] else { return }
-        let newToMe = conversation.conveyedStorylines.filter { !runtime.memory.knows($0) }
+        let newToMe = conversation.conveyedStorylines.filter { !knewBefore.contains($0) }
         let provenance: Provenance = newToMe.isEmpty ? .observed : .told(by: other, at: now)
         let node = runtime.memory.append(
             kind: .chat, text: summary, poignancy: 5, provenance: provenance,
@@ -471,8 +499,10 @@ public actor Simulation {
                 guard let time = storyline.eventTime, let venue = storyline.targetLocation else { continue }
                 let place = world.location(venue)?.name ?? venue.rawValue
                 let text = "\(runtime.profile.name) plans to go to \(storyline.title) at \(place) on \(time)"
+                // Accepting is learning only if this storyline itself was new.
+                let learned: Provenance = knewBefore.contains(storylineID) ? .observed : .told(by: other, at: now)
                 let plan = runtime.memory.append(
-                    kind: .plan, text: text, poignancy: 6, provenance: provenance,
+                    kind: .plan, text: text, poignancy: 6, provenance: learned,
                     storylines: [storylineID], embedding: embedder.embed(text), at: now)
                 runtime.pendingPoignancy.append(plan.id)
             case .invite:
@@ -555,7 +585,12 @@ public actor Simulation {
     // MARK: - Accounting
 
     private func record(_ kind: BrainCallKind, _ id: AgentID, _ receipt: BrainCallReceipt) {
-        budget.record(kind, agent: id, day: now.day, receipt: receipt)
+        record(kind, [id], receipt)
+    }
+
+    /// One call made on behalf of several agents (a conversation), shared across their days.
+    private func record(_ kind: BrainCallKind, _ ids: [AgentID], _ receipt: BrainCallReceipt) {
+        budget.record(kind, agents: ids, day: now.day, receipt: receipt)
     }
 
     private func fail(_ id: AgentID, _ kind: BrainCallKind, _ error: BrainError) {

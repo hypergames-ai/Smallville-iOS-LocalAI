@@ -12,7 +12,23 @@ struct BudgetTests {
             receipt: BrainCallReceipt(inputTokens: 3500, outputTokens: 10, wallSeconds: 0.1))
         let summary = budget.summary()
         #expect(summary.overBudgetPrompts == 1)
-        #expect(summary.largestPromptTokens == 3500)
+        #expect(summary.largestPromptTokens == 3510, "input plus response")
+        #expect(!summary.withinBudget)
+    }
+
+    @Test("the response counts toward the prompt budget, per kind as well as overall")
+    func responseCounts() {
+        var budget = CallBudget()
+        budget.record(
+            .converse, agent: AgentID("a"), day: 0,
+            receipt: BrainCallReceipt(inputTokens: 2600, outputTokens: 500, wallSeconds: 1))
+        budget.record(
+            .planHour, agent: AgentID("a"), day: 0,
+            receipt: BrainCallReceipt(inputTokens: 2600, outputTokens: 300, wallSeconds: 1))
+        let summary = budget.summary()
+        #expect(summary.overBudgetPrompts == 1, "2,600 + 500 is over 3,000; 2,600 + 300 is not")
+        #expect(summary.largestPromptTokens == 3100)
+        #expect(summary.largestPromptTokensByKind == ["converse": 3100, "planHour": 2900])
         #expect(!summary.withinBudget)
     }
 

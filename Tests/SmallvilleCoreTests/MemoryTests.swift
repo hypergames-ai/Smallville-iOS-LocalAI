@@ -90,4 +90,27 @@ struct MemoryTests {
         #expect(abs(cosine(a, a) - 1) < 0.0001)
         #expect(cosine(a, embedder.embed("quantum chromodynamics lecture")) < 0.5)
     }
+
+    @Test("rated poignancy moves the reflection trigger only for memories since the last reflection")
+    func ratingsMoveTheTrigger() {
+        let embedder = HashingEmbedder()
+        var stream = MemoryStream()
+        func add(_ text: String) -> Int {
+            stream.append(
+                kind: .observation, text: text, poignancy: 2, provenance: .observed, embedding: embedder.embed(text),
+                at: SimTime(minutes: 0)
+            ).id
+        }
+        let old = add("before the reflection")
+        stream.markReflected()
+        let new = add("after the reflection")
+        #expect(stream.importanceSinceReflection == 2)
+
+        stream.setPoignancy([(old, 10), (new, 10)])
+        #expect(stream.importanceSinceReflection == 10, "only the new memory's +8 counts")
+        #expect(stream.nodes.map(\.poignancy) == [10, 10], "both scores change")
+
+        stream.setPoignancy([(new, 1)])
+        #expect(stream.importanceSinceReflection == 1)
+    }
 }

@@ -188,4 +188,122 @@ struct ConversationTests {
             #expect(conversation.acts.map(\.topic) == ["kept"])
         }
     }
+
+    // MARK: - Knowledge before the conversation
+
+    private static let ana = AgentID("ana")
+    private static let ben = AgentID("ben")
+
+    /// Two acquaintances who both live at the cafe, so they meet on the first tick.
+    private static func cafeRegulars() -> [AgentProfile] {
+        [("ana", "Ana Novak"), ("ben", "Ben Osei")].map { id, name in
+            AgentProfile(
+                id: AgentID(id), name: name, age: 30, innateTraits: "friendly", occupation: "barista",
+                lifestyle: "early riser", currently: "\(name) works at the cafe.", home: WorldMap.hobbsCafe,
+                workplace: WorldMap.hobbsCafe, favoriteSpot: WorldMap.park, wakeHour: 7, relationships: [:])
+        }
+    }
+
+    private static func storyline(_ id: String, seededIn agent: AgentID) -> Storyline {
+        Storyline(
+            id: StorylineID(id), title: "\(id) event", seedText: "There is a \(id) event at the park tonight.",
+            seededIn: agent, seededAt: SimTime(minutes: 7 * 60), targetLocation: WorldMap.park,
+            eventTime: SimTime(minutes: 19 * 60))
+    }
+
+    /// Everyone spends the hour at `place(agent, hour)`, the cafe unless overridden.
+    private static func staying(
+        _ place: @escaping @Sendable (AgentID, Int) -> LocationID = { _, _ in WorldMap.hobbsCafe }
+    ) -> @Sendable (AgentContext, DayPlan) async throws -> HourPlan? {
+        { context, _ in
+            HourPlan(
+                hour: context.now.hour,
+                actions: [
+                    PlannedAction(
+                        startMinute: 0, durationMinutes: 60, activity: "spending time",
+                        location: place(context.profile.id, context.now.hour), emoji: "☕️",
+                        event: EventTriple(subject: context.profile.name, predicate: "is", object: "spending time"))
+                ])
+        }
+    }
+
+    private static func scriptedTalk(acts: [SocialAct], conveyed: [StorylineID])
+        -> @Sendable (ConversationRequest) async throws -> Conversation?
+    {
+        { request in
+            Conversation(
+                initiator: request.initiator.profile.id, partner: request.partner.profile.id,
+                turns: [ConversationTurn(speaker: request.initiator.profile.id, text: "hello")], acts: acts,
+                conveyedStorylines: conveyed, initiatorSummary: "we talked", partnerSummary: "we talked")
+        }
+    }
+
+    @Test("an accepted invitation is told-by only if its own storyline was new to the acceptor")
+    func acceptProvenanceIsPerStoryline() async throws {
+        // Ana knows x and y; Ben already knows y. Ana conveys x, and Ben accepts y.
+        let brain = ScriptedBrain(
+            planHour: Self.staying(),
+            converse: Self.scriptedTalk(
+                acts: [
+                    SocialAct(kind: .invite, from: Self.ana, to: Self.ben, topic: "y", storyline: StorylineID("y")),
+                    SocialAct(kind: .accept, from: Self.ben, to: Self.ana, topic: "y", storyline: StorylineID("y")),
+                ],
+                conveyed: [StorylineID("x")]))
+        let simulation = Simulation(world: .smallvilleSubset(), profiles: Self.cafeRegulars(), brain: brain)
+        await simulation.whisper(Self.storyline("x", seededIn: Self.ana))
+        await simulation.whisper(Self.storyline("y", seededIn: Self.ana))
+        await simulation.whisper(Self.storyline("y", seededIn: Self.ben))
+        try await simulation.run(minutes: 60)
+
+        #expect(!Self.conversations(in: await simulation.events).isEmpty)
+        let discoveries = await simulation.discoveries()
+        let x = try #require(discoveries.first { $0.storyline == StorylineID("x") })
+        let y = try #require(discoveries.first { $0.storyline == StorylineID("y") })
+        #expect(x.diffusion.map { [$0.from, $0.to] } == [[Self.ana, Self.ben]])
+        #expect(y.diffusion.isEmpty, "Ben knew y already; accepting it is not being told it")
+        #expect(y.accepted == [Self.ben])
+    }
+
+    @Test("an invitation from someone who never knew the storyline, and its acceptance, are dropped")
+    func uninformedInviteIsDropped() async throws {
+        // Only Ana knows x, but the model has Ben invite Ana to it and Ana accept.
+        let brain = ScriptedBrain(
+            planHour: Self.staying(),
+            converse: Self.scriptedTalk(
+                acts: [
+                    SocialAct(kind: .invite, from: Self.ben, to: Self.ana, topic: "x", storyline: StorylineID("x")),
+                    SocialAct(kind: .accept, from: Self.ana, to: Self.ben, topic: "x", storyline: StorylineID("x")),
+                ],
+                conveyed: []))
+        let simulation = Simulation(world: .smallvilleSubset(), profiles: Self.cafeRegulars(), brain: brain)
+        await simulation.whisper(Self.storyline("x", seededIn: Self.ana))
+        try await simulation.run(minutes: 60)
+
+        #expect(!Self.conversations(in: await simulation.events).isEmpty)
+        let x = try #require(await simulation.discoveries().first)
+        #expect(x.knows == [Self.ana], "Ben never learned x, so he is not in knows")
+        #expect(x.invited.isEmpty)
+        #expect(x.accepted.isEmpty, "an acceptance of an invitation that was never made")
+        #expect(x.diffusion.isEmpty)
+    }
+
+    @Test("someone who has set off for elsewhere does not start a conversation where they were")
+    func travelersAreNotPresent() async throws {
+        // Both start at the cafe at 07:00; Ana's 07:00 plan is the park, a one-tick walk.
+        let brain = ScriptedBrain(
+            planHour: Self.staying { agent, _ in agent == Self.ana ? WorldMap.park : WorldMap.hobbsCafe },
+            converse: Self.scriptedTalk(acts: [], conveyed: []))
+        let simulation = Simulation(world: .smallvilleSubset(), profiles: Self.cafeRegulars(), brain: brain)
+        try await simulation.run(minutes: 10)
+
+        let events = await simulation.events
+        #expect(Self.conversations(in: events).isEmpty, "Ana left at 07:00; she is not in the cafe to talk")
+        let departed = events.contains { event in
+            if case .acted(let agent, let action, let at) = event {
+                return agent == Self.ana && action.location == WorldMap.park && at == SimTime(minutes: 7 * 60)
+            }
+            return false
+        }
+        #expect(departed, "the scenario really has Ana leaving on the first tick")
+    }
 }

@@ -22,7 +22,12 @@ public struct CallBudget: Sendable, Codable {
     public private(set) var totalInputTokens = 0
     public private(set) var totalOutputTokens = 0
     public private(set) var totalWallSeconds = 0.0
+    /// Largest single call, counted as CLAUDE.md defines a prompt: input (instructions, prompt,
+    /// schema) plus the response.
     public private(set) var largestPromptTokens = 0
+    /// The same peak per `BrainCallKind`, so an oversized call kind is visible in the report.
+    public private(set) var largestPromptTokensByKind: [String: Int] = [:]
+    /// Calls whose input plus response exceeded `maxPromptTokens`.
     public private(set) var overBudgetPrompts = 0
 
     public init() {}
@@ -44,8 +49,10 @@ public struct CallBudget: Sendable, Codable {
         totalInputTokens += receipt.inputTokens
         totalOutputTokens += receipt.outputTokens
         totalWallSeconds += receipt.wallSeconds
-        largestPromptTokens = max(largestPromptTokens, receipt.inputTokens)
-        if receipt.inputTokens > Self.maxPromptTokens {
+        let promptTokens = receipt.inputTokens + receipt.outputTokens
+        largestPromptTokens = max(largestPromptTokens, promptTokens)
+        largestPromptTokensByKind[kind.rawValue] = max(largestPromptTokensByKind[kind.rawValue] ?? 0, promptTokens)
+        if promptTokens > Self.maxPromptTokens {
             overBudgetPrompts += 1
         }
     }
@@ -61,6 +68,7 @@ public struct CallBudget: Sendable, Codable {
             meanCallsPerAgentDay: mean,
             maxCallsPerAgentDay: maxPerAgentDay,
             largestPromptTokens: largestPromptTokens,
+            largestPromptTokensByKind: largestPromptTokensByKind,
             overBudgetPrompts: overBudgetPrompts,
             callsByKind: callsByKind,
             totalInputTokens: totalInputTokens,
@@ -77,6 +85,7 @@ public struct BudgetSummary: Sendable, Codable {
     public var meanCallsPerAgentDay: Double
     public var maxCallsPerAgentDay: Int
     public var largestPromptTokens: Int
+    public var largestPromptTokensByKind: [String: Int]
     public var overBudgetPrompts: Int
     public var callsByKind: [String: Int]
     public var totalInputTokens: Int
