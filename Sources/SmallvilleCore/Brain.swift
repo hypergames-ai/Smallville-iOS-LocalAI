@@ -113,7 +113,8 @@ public struct HourPlan: Hashable, Sendable, Codable {
     /// Makes the plan safe to execute: starts clamped to the hour and snapped down to the tick
     /// grid (the simulation only samples minutes 0, 10, ..., 50), sorted, duplicates at the same
     /// start dropped, the first action pulled to minute 0, durations set to the gap to the next
-    /// action (the last runs to the end of the hour), and at most `maxActions` kept.
+    /// action (the last runs to the end of the hour), at most `maxActions` kept, and each emoji
+    /// made displayable (`ActionEmoji.normalized`).
     public func normalized(hour: Int) -> HourPlan {
         guard !actions.isEmpty else { return HourPlan(hour: hour, actions: []) }
         let tick = SimTime.minutesPerTick
@@ -134,6 +135,7 @@ public struct HourPlan: Hashable, Sendable, Codable {
         for index in kept.indices {
             let end = index + 1 < kept.count ? kept[index + 1].startMinute : 60
             kept[index].durationMinutes = end - kept[index].startMinute
+            kept[index].emoji = ActionEmoji.normalized(kept[index].emoji)
         }
         return HourPlan(hour: hour, actions: kept)
     }

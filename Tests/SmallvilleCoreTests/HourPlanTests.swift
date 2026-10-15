@@ -31,6 +31,25 @@ struct HourPlanTests {
         #expect(HourPlan(hour: 9, actions: []).normalized(hour: 9).actions.isEmpty)
     }
 
+    @Test(
+        "an emoji field becomes one displayable glyph",
+        arguments: [
+            ("☕", "☕"), ("☕️", "☕️"), ("👩‍💻", "👩‍💻"), ("🏳️‍🌈", "🏳️‍🌈"), ("👍🏽", "👍🏽"), ("🇯🇵", "🇯🇵"), ("1️⃣", "1️⃣"), (":heart:", "❤️"),
+            (":Coffee:", "☕️"),
+            (":shopping_list:", "🛒"), (":no_such_code:", ActionEmoji.fallback), ("☕ coffee", "☕"),
+            ("coffee", ActionEmoji.fallback), ("", ActionEmoji.fallback), ("1", ActionEmoji.fallback),
+        ])
+    func emojiNormalization(raw: String, expected: String) {
+        #expect(ActionEmoji.normalized(raw) == expected)
+    }
+
+    @Test("normalizing a plan fixes shortcode emoji from the model")
+    func planEmojiNormalization() {
+        var action = Self.action(start: 0, "coffee")
+        action.emoji = ":coffee:"
+        #expect(HourPlan(hour: 9, actions: [action]).normalized(hour: 9).actions.map(\.emoji) == ["☕️"])
+    }
+
     @Test("a location given by name resolves; an unknown one falls back to the previous action's place")
     func locationResolution() async throws {
         let brain = ScriptedBrain(planHour: { context, _ in
