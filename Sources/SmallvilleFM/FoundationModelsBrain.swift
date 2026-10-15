@@ -2,13 +2,15 @@
 import Foundation
 import FoundationModels
 import SmallvilleCore
+import os
 
-/// Drives one on-device `LanguageModelSession` per agent. Every call uses guided generation
-/// and is mapped into the core's plain types; token counts and wall time come back as receipts.
+/// Answers the simulation's decisions with the on-device model. Each call is a fresh
+/// `LanguageModelSession` with the agent's persona as instructions (ADR 13), uses guided
+/// generation, and is mapped into the core's plain types with a receipt of its real token cost.
 @available(iOS 26.0, macOS 26.0, *)
 public actor FoundationModelsBrain: AgentBrain {
     private let model: SystemLanguageModel
-    private var sessions: [AgentID: LanguageModelSession] = [:]
+    private let log = Logger(subsystem: "smallville", category: "fm")
 
     public init(model: SystemLanguageModel = .default) {
         self.model = model
@@ -18,7 +20,8 @@ public actor FoundationModelsBrain: AgentBrain {
 
     public func planDay(_ context: AgentContext) async throws -> BrainResponse<DayPlan> {
         let (generated, receipt) = try await respond(
-            for: context.profile, prompt: Prompts.dayPlan(context), generating: GeneratedDayPlan.self)
+            .planDay, for: context.profile, decoding: GeneratedDayPlan.self
+        ) { Prompts.dayPlan(context, memoryLimit: $0) }
         let plan = DayPlan(
             wakeHour: generated.wakeHour,
             entries: generated.entries.map { DayPlanEntry(hour: $0.hour, activity: $0.activity) })
@@ -26,9 +29,14 @@ public actor FoundationModelsBrain: AgentBrain {
     }
 
     public func planHour(_ context: AgentContext, dayPlan: DayPlan) async throws -> BrainResponse<HourPlan> {
+        var locationIDs = context.knownLocations.map(\.id.rawValue)
+        if locationIDs.isEmpty {
+            locationIDs = [context.location.id.rawValue]
+        }
+        let schema = try makeSchema { try DynamicSchemas.hourPlan(locationIDs: locationIDs) }
         let (generated, receipt) = try await respond(
-            for: context.profile, prompt: Prompts.hourPlan(context, dayPlan: dayPlan),
-            generating: GeneratedHourPlan.self)
+            .planHour, for: context.profile, schema: schema, decoding: GeneratedHourPlan.self
+        ) { Prompts.hourPlan(context, dayPlan: dayPlan, memoryLimit: $0) }
         let actions = generated.actions.map { action in
             PlannedAction(
                 startMinute: action.startMinute, durationMinutes: action.durationMinutes, activity: action.activity,
@@ -41,12 +49,25 @@ public actor FoundationModelsBrain: AgentBrain {
     public func converse(_ request: ConversationRequest) async throws -> BrainResponse<Conversation> {
         let a = request.initiator.profile
         let b = request.partner.profile
+        var storylineIDs: [String] = []
+        for storyline in request.initiator.activeStorylines + request.partner.activeStorylines
+        where !storylineIDs.contains(storyline.id.rawValue) {
+            storylineIDs.append(storyline.id.rawValue)
+        }
+        let schema = try makeSchema {
+            try DynamicSchemas.conversation(
+                names: [a.name, b.name], storylineIDs: storylineIDs, maxTurns: request.maxTurns)
+        }
         let (generated, receipt) = try await respond(
-            for: a, prompt: Prompts.conversation(request), generating: GeneratedConversation.self)
+            .converse, for: a, schema: schema, decoding: GeneratedConversation.self, memoryLimit: 5
+        ) { Prompts.conversation(request, memoryLimit: $0) }
 
+        // The schema limits names to these two, so anything else cannot happen; the initiator is a safe default.
         func agent(named name: String) -> AgentID {
-            name.localizedCaseInsensitiveContains(b.name.split(separator: " ").first.map(String.init) ?? b.name)
-                ? b.id : a.id
+            name == b.name ? b.id : a.id
+        }
+        func storyline(_ raw: String) -> StorylineID? {
+            raw == DynamicSchemas.noStoryline ? nil : StorylineID(raw)
         }
 
         let turns = generated.turns.map { ConversationTurn(speaker: agent(named: $0.speaker), text: $0.text) }
@@ -54,18 +75,22 @@ public actor FoundationModelsBrain: AgentBrain {
             guard let kind = SocialActKind(rawValue: act.kind) else { return nil }
             return SocialAct(
                 kind: kind, from: agent(named: act.from), to: agent(named: act.to), topic: act.topic,
-                storyline: act.storylineID.isEmpty ? nil : StorylineID(act.storylineID))
+                storyline: storyline(act.storylineID))
+        }
+        var conveyed: [StorylineID] = []
+        for id in generated.conveyedStorylineIDs.compactMap(storyline) where !conveyed.contains(id) {
+            conveyed.append(id)
         }
         let conversation = Conversation(
-            initiator: a.id, partner: b.id, turns: turns, acts: acts,
-            conveyedStorylines: generated.conveyedStorylineIDs.filter { !$0.isEmpty }.map { StorylineID($0) },
+            initiator: a.id, partner: b.id, turns: turns, acts: acts, conveyedStorylines: conveyed,
             initiatorSummary: generated.initiatorSummary, partnerSummary: generated.partnerSummary)
         return BrainResponse(value: conversation, receipt: receipt)
     }
 
     public func reflect(_ context: AgentContext) async throws -> BrainResponse<[Reflection]> {
         let (generated, receipt) = try await respond(
-            for: context.profile, prompt: Prompts.reflection(context), generating: GeneratedReflections.self)
+            .reflect, for: context.profile, decoding: GeneratedReflections.self
+        ) { Prompts.reflection(context, memoryLimit: $0) }
         let known = Set(context.relevantMemories.map(\.id))
         let reflections = generated.insights.map {
             Reflection(insight: $0.insight, evidence: $0.evidence.filter { known.contains($0) })
@@ -79,7 +104,8 @@ public actor FoundationModelsBrain: AgentBrain {
                 value: [], receipt: BrainCallReceipt(inputTokens: 0, outputTokens: 0, wallSeconds: 0))
         }
         let (generated, receipt) = try await respond(
-            for: profile, prompt: Prompts.poignancy(texts, for: profile), generating: GeneratedRatings.self)
+            .ratePoignancy, for: profile, decoding: GeneratedRatings.self, memoryLimit: 0
+        ) { _ in Prompts.poignancy(texts, for: profile) }
         var ratings = generated.ratings.map { max(1, min(10, $0)) }
         if ratings.count < texts.count {
             ratings += Array(repeating: 3, count: texts.count - ratings.count)
@@ -87,63 +113,189 @@ public actor FoundationModelsBrain: AgentBrain {
         return BrainResponse(value: Array(ratings.prefix(texts.count)), receipt: receipt)
     }
 
-    // MARK: - Sessions
+    // MARK: - One call
 
-    private func session(for profile: AgentProfile) throws -> LanguageModelSession {
-        if let existing = sessions[profile.id] {
-            return existing
-        }
+    /// One guided-generation call in a fresh session. With a `schema`, the model fills that
+    /// runtime schema and the result is decoded into `Content`; without one, `Content`'s own
+    /// schema is used. A context overflow is retried once with half the retrieved memories; a
+    /// prompt without memories (`memoryLimit` 0 or 1) is not retried.
+    private func respond<Content: Generable>(
+        _ kind: BrainCallKind, for profile: AgentProfile, schema: GenerationSchema? = nil,
+        decoding type: Content.Type, memoryLimit: Int = Prompts.defaultMemoryLimit,
+        prompt: (Int) -> String
+    ) async throws -> (Content, BrainCallReceipt) {
         guard model.isAvailable else {
             throw BrainError.unavailable(String(describing: model.availability))
         }
-        let session = LanguageModelSession(
-            model: model, instructions: Instructions(Prompts.instructions(for: profile)))
-        session.prewarm()
-        sessions[profile.id] = session
-        return session
-    }
-
-    private func resetSession(for profile: AgentProfile) {
-        sessions[profile.id] = nil
-    }
-
-    /// One guided-generation call with error mapping, one retry on context overflow, and a receipt.
-    private func respond<Content: Generable>(
-        for profile: AgentProfile, prompt: String, generating type: Content.Type, isRetry: Bool = false
-    ) async throws -> (Content, BrainCallReceipt) {
-        let session = try session(for: profile)
-        let clock = ContinuousClock()
-        let start = clock.now
-        do {
-            let response = try await session.respond(to: prompt, generating: type)
-            let elapsed = clock.now - start
-            let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-            return (response.content, receipt(for: response, prompt: prompt, seconds: seconds))
-        } catch let error as LanguageModelSession.GenerationError {
-            switch error {
-            case .exceededContextWindowSize where !isRetry:
-                resetSession(for: profile)
-                return try await respond(for: profile, prompt: prompt, generating: type, isRetry: true)
-            case .guardrailViolation, .refusal:
-                throw BrainError.refused(error.localizedDescription)
-            case .assetsUnavailable:
-                throw BrainError.unavailable(error.localizedDescription)
-            default:
-                throw BrainError.malformed(error.localizedDescription)
+        let instructions = Prompts.instructions(for: profile)
+        var limit = memoryLimit
+        var retried = false
+        while true {
+            let text = prompt(limit)
+            let session = LanguageModelSession(model: model, instructions: Instructions(instructions))
+            let clock = ContinuousClock()
+            let start = clock.now
+            do {
+                let content: Content
+                let receipt: BrainCallReceipt
+                if let schema {
+                    let response = try await session.respond(to: text, schema: schema)
+                    content = try Content(response.content)
+                    receipt = await self.receipt(
+                        for: response, instructions: instructions, prompt: text, schema: schema,
+                        seconds: seconds(since: start, clock))
+                } else {
+                    let response = try await session.respond(to: text, generating: type)
+                    content = response.content
+                    receipt = await self.receipt(
+                        for: response, instructions: instructions, prompt: text, schema: Content.generationSchema,
+                        seconds: seconds(since: start, clock))
+                }
+                log.debug(
+                    "\(kind.rawValue, privacy: .public) \(profile.id.rawValue, privacy: .public): in \(receipt.inputTokens) out \(receipt.outputTokens) \(receipt.wallSeconds, format: .fixed(precision: 1))s"
+                )
+                return (content, receipt)
+            } catch {
+                switch Self.classify(error) {
+                case .contextExceeded(let detail) where !retried && limit > 1:
+                    log.notice(
+                        "\(kind.rawValue, privacy: .public): context exceeded (\(detail, privacy: .public)); retrying with \(limit / 2) memories"
+                    )
+                    limit /= 2
+                    retried = true
+                case .contextExceeded(let detail):
+                    throw fail(kind, BrainError.malformed("context exceeded: \(detail)"))
+                case .brain(let brainError):
+                    throw fail(kind, brainError)
+                case .cancelled:
+                    throw error
+                }
             }
         }
     }
 
-    private func receipt<Content: Generable>(
-        for response: LanguageModelSession.Response<Content>, prompt: String, seconds: Double
-    ) -> BrainCallReceipt {
+    private func makeSchema(_ build: () throws -> GenerationSchema) throws -> GenerationSchema {
+        do {
+            return try build()
+        } catch {
+            throw fail(nil, BrainError.malformed("schema: \(error)"))
+        }
+    }
+
+    private func fail(_ kind: BrainCallKind?, _ error: BrainError) -> BrainError {
+        log.error(
+            "\(kind?.rawValue ?? "schema", privacy: .public) failed: \(String(describing: error), privacy: .public)")
+        return error
+    }
+
+    private func seconds(since start: ContinuousClock.Instant, _ clock: ContinuousClock) -> Double {
+        let elapsed = clock.now - start
+        return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+    }
+
+    // MARK: - Receipts
+
+    /// Real token counts: the response's `usage` on 27; on 26.4 the model's token counter over
+    /// instructions, prompt, schema and generated content; before that, an estimate.
+    private func receipt<C: Generable>(
+        for response: LanguageModelSession.Response<C>, instructions: String, prompt: String,
+        schema: GenerationSchema, seconds: Double
+    ) async -> BrainCallReceipt {
         if #available(iOS 27.0, macOS 27.0, *) {
             return BrainCallReceipt(
                 inputTokens: response.usage.input.totalTokenCount,
                 outputTokens: response.usage.output.totalTokenCount, wallSeconds: seconds)
         }
-        // iOS 26 has no usage on the response; estimate so the budget still has a number.
-        return BrainCallReceipt(inputTokens: prompt.count / 4 + 400, outputTokens: 150, wallSeconds: seconds)
+        if #available(iOS 26.4, macOS 26.4, *) {
+            // VERIFY: compiled against the 27 SDK only; not run on a 26.4 device. Whether the
+            // schema count matches what the session adds to the prompt is unconfirmed.
+            do {
+                let input =
+                    try await model.tokenCount(for: Instructions(instructions))
+                    + model.tokenCount(for: Prompt(prompt)) + model.tokenCount(for: schema)
+                let output = try await model.tokenCount(for: Prompt(response.rawContent.jsonString))
+                return BrainCallReceipt(inputTokens: input, outputTokens: output, wallSeconds: seconds)
+            } catch {
+                log.notice("token count unavailable: \(String(describing: error), privacy: .public)")
+            }
+        }
+        let characters = instructions.count + prompt.count
+        return BrainCallReceipt(
+            inputTokens: characters / 4 + 400, outputTokens: response.rawContent.jsonString.count / 4,
+            wallSeconds: seconds)
+    }
+
+    // MARK: - Errors
+
+    private enum Failure {
+        case contextExceeded(String)
+        case brain(BrainError)
+        /// The task was cancelled; rethrown as is so a stopped run stops instead of failing every call.
+        case cancelled
+    }
+
+    /// Maps every error the framework can throw to a `BrainError`, so none escapes into the
+    /// simulation's step. iOS 27 throws `LanguageModelError` and friends; iOS 26 (and apps
+    /// built with Xcode 26) throws `LanguageModelSession.GenerationError`.
+    private static func classify(_ error: any Error) -> Failure {
+        if error is CancellationError {
+            return .cancelled
+        }
+        if let error = error as? BrainError {
+            return .brain(error)
+        }
+        if #available(iOS 27.0, macOS 27.0, *) {
+            if let error = error as? LanguageModelError {
+                switch error {
+                case .contextSizeExceeded(let context):
+                    return .contextExceeded("\(context.tokenCount) of \(context.contextSize) tokens")
+                case .guardrailViolation, .refusal:
+                    return .brain(.refused(error.localizedDescription))
+                case .rateLimited, .timeout:
+                    return .brain(.unavailable(error.localizedDescription))
+                case .unsupportedCapability, .unsupportedTranscriptContent, .unsupportedGenerationGuide,
+                    .unsupportedLanguageOrLocale:
+                    return .brain(.malformed(error.localizedDescription))
+                @unknown default:
+                    return .brain(.malformed(error.localizedDescription))
+                }
+            }
+            if let error = error as? SystemLanguageModel.Error {
+                switch error {
+                case .assetsUnavailable:
+                    return .brain(.unavailable(error.localizedDescription))
+                @unknown default:
+                    return .brain(.unavailable(error.localizedDescription))
+                }
+            }
+            if let error = error as? LanguageModelSession.Error {
+                switch error {
+                case .concurrentRequests, .transcriptMutationWhileResponding:
+                    return .brain(.malformed(error.localizedDescription))
+                @unknown default:
+                    return .brain(.malformed(error.localizedDescription))
+                }
+            }
+            if let error = error as? GeneratedContent.ParsingError {
+                return .brain(.malformed("parsing: \(error.debugDescription)"))
+            }
+        }
+        if let error = error as? LanguageModelSession.GenerationError {
+            switch error {
+            case .exceededContextWindowSize:
+                return .contextExceeded(error.localizedDescription)
+            case .guardrailViolation, .refusal:
+                return .brain(.refused(error.localizedDescription))
+            case .assetsUnavailable, .rateLimited:
+                return .brain(.unavailable(error.localizedDescription))
+            case .unsupportedGuide, .unsupportedLanguageOrLocale, .decodingFailure, .concurrentRequests:
+                return .brain(.malformed(error.localizedDescription))
+            @unknown default:
+                return .brain(.malformed(error.localizedDescription))
+            }
+        }
+        // Decoding the generated content into a mirror type, or anything else unforeseen.
+        return .brain(.malformed(String(describing: error)))
     }
 }
 #endif

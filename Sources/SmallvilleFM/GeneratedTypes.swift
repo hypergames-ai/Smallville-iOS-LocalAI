@@ -5,6 +5,10 @@ import FoundationModels
 // The shapes the model fills in. They mirror the core's plain types one-to-one; the mapping
 // lives in FoundationModelsBrain. Descriptions count against the 3,000-token prompt budget,
 // so keep them short.
+//
+// Hour plans and conversations are generated against runtime schemas from `DynamicSchemas`
+// (locations, storylines and speakers limited to known values) and decoded into these types,
+// so property names here and there must match.
 
 @Generable(description: "A plan for one day as a short chronological outline.")
 struct GeneratedDayPlan {
@@ -36,7 +40,7 @@ struct GeneratedAction {
     var durationMinutes: Int
     @Guide(description: "The activity in one short sentence")
     var activity: String
-    // TODO: constrain to the known locations with DynamicGenerationSchema instead of a free string.
+    // Limited to the agent's known locations by DynamicSchemas.hourPlan.
     @Guide(description: "Location id, copied exactly from the list in the prompt")
     var locationID: String
     @Guide(description: "A single emoji for the activity")
