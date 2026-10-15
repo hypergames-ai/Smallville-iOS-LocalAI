@@ -7,7 +7,8 @@ on:
 
 jobs:
   core-tests:
-    # The core and its tests are model-free and deterministic, so they run on a hosted Mac.
+    # Core and adapter tests are model-free (the adapter tests use hand-built model output), so
+    # they run on a hosted Mac without Apple Intelligence.
     # Hosted runners may lag the Xcode version; the package builds with Xcode 26.x or later.
     runs-on: macos-latest
     steps:

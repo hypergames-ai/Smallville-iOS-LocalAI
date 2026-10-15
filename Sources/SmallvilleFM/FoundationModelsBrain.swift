@@ -22,69 +22,28 @@ public actor FoundationModelsBrain: AgentBrain {
         let (generated, receipt) = try await respond(
             .planDay, for: context.profile, decoding: GeneratedDayPlan.self
         ) { Prompts.dayPlan(context, memoryLimit: $0) }
-        let plan = DayPlan(
-            wakeHour: generated.wakeHour,
-            entries: generated.entries.map { DayPlanEntry(hour: $0.hour, activity: $0.activity) })
-        return BrainResponse(value: plan, receipt: receipt)
+        return BrainResponse(value: Mapping.dayPlan(generated), receipt: receipt)
     }
 
     public func planHour(_ context: AgentContext, dayPlan: DayPlan) async throws -> BrainResponse<HourPlan> {
-        var locationIDs = context.knownLocations.map(\.id.rawValue)
-        if locationIDs.isEmpty {
-            locationIDs = [context.location.id.rawValue]
-        }
-        let schema = try makeSchema { try DynamicSchemas.hourPlan(locationIDs: locationIDs) }
+        let schema = try makeSchema { try DynamicSchemas.hourPlan(locationIDs: Mapping.locationIDs(for: context)) }
         let (generated, receipt) = try await respond(
             .planHour, for: context.profile, schema: schema, decoding: GeneratedHourPlan.self
         ) { Prompts.hourPlan(context, dayPlan: dayPlan, memoryLimit: $0) }
-        let actions = generated.actions.map { action in
-            PlannedAction(
-                startMinute: action.startMinute, durationMinutes: action.durationMinutes, activity: action.activity,
-                location: LocationID(action.locationID), emoji: action.emoji,
-                event: EventTriple(subject: action.subject, predicate: action.predicate, object: action.object))
-        }
-        return BrainResponse(value: HourPlan(hour: context.now.hour, actions: actions), receipt: receipt)
+        return BrainResponse(value: Mapping.hourPlan(generated, hour: context.now.hour), receipt: receipt)
     }
 
     public func converse(_ request: ConversationRequest) async throws -> BrainResponse<Conversation> {
         let a = request.initiator.profile
         let b = request.partner.profile
-        var storylineIDs: [String] = []
-        for storyline in request.initiator.activeStorylines + request.partner.activeStorylines
-        where !storylineIDs.contains(storyline.id.rawValue) {
-            storylineIDs.append(storyline.id.rawValue)
-        }
         let schema = try makeSchema {
             try DynamicSchemas.conversation(
-                names: [a.name, b.name], storylineIDs: storylineIDs, maxTurns: request.maxTurns)
+                names: [a.name, b.name], storylineIDs: Mapping.storylineIDs(for: request), maxTurns: request.maxTurns)
         }
         let (generated, receipt) = try await respond(
             .converse, for: a, schema: schema, decoding: GeneratedConversation.self, memoryLimit: 5
         ) { Prompts.conversation(request, memoryLimit: $0) }
-
-        // The schema limits names to these two, so anything else cannot happen; the initiator is a safe default.
-        func agent(named name: String) -> AgentID {
-            name == b.name ? b.id : a.id
-        }
-        func storyline(_ raw: String) -> StorylineID? {
-            raw == DynamicSchemas.noStoryline ? nil : StorylineID(raw)
-        }
-
-        let turns = generated.turns.map { ConversationTurn(speaker: agent(named: $0.speaker), text: $0.text) }
-        let acts = generated.acts.compactMap { act -> SocialAct? in
-            guard let kind = SocialActKind(rawValue: act.kind) else { return nil }
-            return SocialAct(
-                kind: kind, from: agent(named: act.from), to: agent(named: act.to), topic: act.topic,
-                storyline: storyline(act.storylineID))
-        }
-        var conveyed: [StorylineID] = []
-        for id in generated.conveyedStorylineIDs.compactMap(storyline) where !conveyed.contains(id) {
-            conveyed.append(id)
-        }
-        let conversation = Conversation(
-            initiator: a.id, partner: b.id, turns: turns, acts: acts, conveyedStorylines: conveyed,
-            initiatorSummary: generated.initiatorSummary, partnerSummary: generated.partnerSummary)
-        return BrainResponse(value: conversation, receipt: receipt)
+        return BrainResponse(value: Mapping.conversation(generated, initiator: a, partner: b), receipt: receipt)
     }
 
     public func reflect(_ context: AgentContext) async throws -> BrainResponse<[Reflection]> {
@@ -92,10 +51,7 @@ public actor FoundationModelsBrain: AgentBrain {
             .reflect, for: context.profile, decoding: GeneratedReflections.self
         ) { Prompts.reflection(context, memoryLimit: $0) }
         let known = Set(context.relevantMemories.map(\.id))
-        let reflections = generated.insights.map {
-            Reflection(insight: $0.insight, evidence: $0.evidence.filter { known.contains($0) })
-        }
-        return BrainResponse(value: reflections, receipt: receipt)
+        return BrainResponse(value: Mapping.reflections(generated, known: known), receipt: receipt)
     }
 
     public func ratePoignancy(_ texts: [String], for profile: AgentProfile) async throws -> BrainResponse<[Int]> {
@@ -106,11 +62,7 @@ public actor FoundationModelsBrain: AgentBrain {
         let (generated, receipt) = try await respond(
             .ratePoignancy, for: profile, decoding: GeneratedRatings.self, memoryLimit: 0
         ) { _ in Prompts.poignancy(texts, for: profile) }
-        var ratings = generated.ratings.map { max(1, min(10, $0)) }
-        if ratings.count < texts.count {
-            ratings += Array(repeating: 3, count: texts.count - ratings.count)
-        }
-        return BrainResponse(value: Array(ratings.prefix(texts.count)), receipt: receipt)
+        return BrainResponse(value: Mapping.ratings(generated, count: texts.count), receipt: receipt)
     }
 
     // MARK: - One call

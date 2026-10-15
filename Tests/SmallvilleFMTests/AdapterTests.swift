@@ -1,0 +1,176 @@
+#if canImport(FoundationModels)
+import Foundation
+import FoundationModels
+import Testing
+
+@testable import SmallvilleCore
+@testable import SmallvilleFM
+
+@Suite("Dynamic schemas")
+struct DynamicSchemaTests {
+    @Test("an hour plan may only use the agent's known locations, deduplicated in order")
+    func hourPlanLocations() throws {
+        let schema = try DynamicSchemas.hourPlan(locationIDs: [
+            "the_ville:hobbs_cafe", "the_ville:park", "the_ville:hobbs_cafe",
+        ])
+        #expect(try Fixtures.choices(for: "locationID", in: schema) == ["the_ville:hobbs_cafe", "the_ville:park"])
+    }
+
+    @Test("an agent who knows no locations can still only stay where it is")
+    func emptyLocationsFallBack() throws {
+        let context = try Fixtures.context(knownLocations: [])
+        #expect(Mapping.locationIDs(for: context) == [context.location.id.rawValue])
+        let schema = try DynamicSchemas.hourPlan(locationIDs: Mapping.locationIDs(for: context))
+        #expect(try Fixtures.choices(for: "locationID", in: schema) == [context.location.id.rawValue])
+    }
+
+    @Test("a conversation may only name its two speakers and the storylines in play, or none")
+    func conversationChoices() throws {
+        let schema = try DynamicSchemas.conversation(
+            names: ["Klaus Mueller", "Maria Lopez"], storylineIDs: ["valentines-party"], maxTurns: 6)
+        for property in ["speaker", "from", "to"] {
+            #expect(try Fixtures.choices(for: property, in: schema) == ["Klaus Mueller", "Maria Lopez"], "\(property)")
+        }
+        #expect(try Fixtures.choices(for: "storylineID", in: schema) == ["valentines-party", "none"])
+        #expect(try Fixtures.choices(for: "conveyedStorylineIDs", in: schema) == ["valentines-party", "none"])
+        #expect(try Fixtures.choices(for: "kind", in: schema) == SocialActKind.allCases.map(\.rawValue))
+    }
+
+    @Test("with no storylines in play, none is the only storyline choice")
+    func noStorylines() throws {
+        let schema = try DynamicSchemas.conversation(names: ["A", "B"], storylineIDs: [], maxTurns: 1)
+        #expect(try Fixtures.choices(for: "storylineID", in: schema) == ["none"])
+        let turns = try Fixtures.node(for: "turns", in: schema)
+        #expect(turns["minItems"] as? Int == 1, "never more turns required than allowed")
+        #expect(turns["maxItems"] as? Int == 1)
+    }
+
+    @Test("storylines either participant knows are offered once each")
+    func storylinesFromBothSides() throws {
+        let other = Storyline(
+            id: StorylineID("whisper-maria"), title: "a secret", seedText: "a secret", seededIn: AgentProfile.maria.id,
+            seededAt: SimTime(minutes: 0))
+        let request = ConversationRequest(
+            initiator: try Fixtures.context(.klaus, storylines: [Fixtures.party]),
+            partner: try Fixtures.context(.maria, storylines: [other, Fixtures.party]), maxTurns: 6)
+        #expect(Mapping.storylineIDs(for: request) == ["valentines-party", "whisper-maria"])
+    }
+}
+
+@Suite("Mapping hand-built model output")
+struct MappingTests {
+    @Test("an hour plan decodes from the schema's shape into core actions")
+    func hourPlan() throws {
+        let generated = try Fixtures.decode(
+            GeneratedHourPlan.self,
+            """
+            {"actions": [{"startMinute": 0, "durationMinutes": 30, "activity": "getting coffee",
+              "locationID": "the_ville:hobbs_cafe", "emoji": ":coffee:", "subject": "Klaus Mueller",
+              "predicate": "is getting", "object": "coffee"}]}
+            """)
+        let plan = Mapping.hourPlan(generated, hour: 9)
+        #expect(plan.hour == 9)
+        let action = try #require(plan.actions.first)
+        #expect(action.location == WorldMap.hobbsCafe)
+        #expect(action.event == EventTriple(subject: "Klaus Mueller", predicate: "is getting", object: "coffee"))
+        #expect(plan.normalized(hour: 9).actions.first?.emoji == "☕️", "the core fixes shortcodes")
+    }
+
+    @Test("names become ids, none becomes no storyline, unknown kinds drop, conveyed storylines dedupe")
+    func conversation() throws {
+        let generated = try Fixtures.decode(
+            GeneratedConversation.self,
+            """
+            {"turns": [{"speaker": "Klaus Mueller", "text": "Coming to the party?"},
+                       {"speaker": "Maria Lopez", "text": "Yes!"}],
+             "acts": [{"kind": "invite", "from": "Klaus Mueller", "to": "Maria Lopez", "topic": "party",
+                       "storylineID": "valentines-party"},
+                      {"kind": "inform", "from": "Maria Lopez", "to": "Klaus Mueller", "topic": "class",
+                       "storylineID": "none"},
+                      {"kind": "hug", "from": "Maria Lopez", "to": "Klaus Mueller", "topic": "x",
+                       "storylineID": "none"}],
+             "conveyedStorylineIDs": ["valentines-party", "none", "valentines-party"],
+             "initiatorSummary": "I invited Maria.", "partnerSummary": "Klaus invited me."}
+            """)
+        let conversation = Mapping.conversation(generated, initiator: .klaus, partner: .maria)
+        let klaus = AgentProfile.klaus.id
+        let maria = AgentProfile.maria.id
+        #expect(conversation.turns.map(\.speaker) == [klaus, maria])
+        #expect(conversation.acts.map(\.kind) == [.invite, .inform])
+        #expect(conversation.acts.map(\.from) == [klaus, maria])
+        #expect(conversation.acts.map(\.storyline) == [StorylineID("valentines-party"), nil])
+        #expect(conversation.conveyedStorylines == [StorylineID("valentines-party")])
+        #expect(conversation.initiatorSummary == "I invited Maria.")
+    }
+
+    @Test("a day plan maps entry by entry")
+    func dayPlan() throws {
+        let generated = try Fixtures.decode(
+            GeneratedDayPlan.self,
+            #"{"wakeHour": 7, "entries": [{"hour": 8, "activity": "study"}, {"hour": 12, "activity": "lunch"}]}"#)
+        #expect(
+            Mapping.dayPlan(generated)
+                == DayPlan(
+                    wakeHour: 7,
+                    entries: [DayPlanEntry(hour: 8, activity: "study"), DayPlanEntry(hour: 12, activity: "lunch")]
+                ))
+    }
+
+    @Test("reflection evidence is limited to memory ids that were in the prompt")
+    func reflections() throws {
+        let generated = try Fixtures.decode(
+            GeneratedReflections.self, #"{"insights": [{"insight": "Klaus likes the cafe", "evidence": [1, 2, 99]}]}"#)
+        #expect(
+            Mapping.reflections(generated, known: [1, 2]) == [
+                Reflection(insight: "Klaus likes the cafe", evidence: [1, 2])
+            ])
+    }
+
+    @Test(
+        "ratings are clamped to 1...10 and made exactly as long as the batch",
+        arguments: [
+            ("[0, 11, 5]", 3, [1, 10, 5]), ("[4]", 3, [4, 3, 3]), ("[2, 2, 2, 2]", 2, [2, 2]),
+        ])
+    func ratings(json: String, count: Int, expected: [Int]) throws {
+        let generated = try Fixtures.decode(GeneratedRatings.self, #"{"ratings": \#(json)}"#)
+        #expect(Mapping.ratings(generated, count: count) == expected)
+    }
+}
+
+@Suite("Prompts")
+struct PromptTests {
+    private static let memories = ["first memory", "second memory", "third memory"]
+
+    @Test("the memory limit trims retrieved memories, and zero leaves the block out")
+    func memoryLimit() throws {
+        let context = try Fixtures.context(memories: Self.memories)
+        let dayPlan = DayPlan(wakeHour: 7, entries: [DayPlanEntry(hour: 9, activity: "study")])
+        let two = Prompts.hourPlan(context, dayPlan: dayPlan, memoryLimit: 2)
+        #expect(two.contains("first memory") && two.contains("second memory"))
+        #expect(!two.contains("third memory"))
+        #expect(!Prompts.hourPlan(context, dayPlan: dayPlan, memoryLimit: 0).contains("Relevant memories"))
+    }
+
+    @Test("the hour-plan prompt lists the known location ids the schema allows")
+    func hourPlanLocations() throws {
+        for context in [try Fixtures.context(), try Fixtures.context(knownLocations: [])] {
+            let prompt = Prompts.hourPlan(context, dayPlan: DayPlan(wakeHour: 7, entries: []))
+            for id in Mapping.locationIDs(for: context) {
+                #expect(prompt.contains(id), "\(id) with \(context.knownLocations.count) known")
+            }
+        }
+    }
+
+    @Test("a conversation prompt gives the partner one memory fewer and names both speakers in full")
+    func conversation() throws {
+        let request = ConversationRequest(
+            initiator: try Fixtures.context(.klaus, memories: Self.memories, storylines: [Fixtures.party]),
+            partner: try Fixtures.context(.maria, memories: ["maria one", "maria two", "maria three"]), maxTurns: 6)
+        let prompt = Prompts.conversation(request, memoryLimit: 2)
+        #expect(prompt.contains("second memory") && !prompt.contains("third memory"))
+        #expect(prompt.contains("maria one") && !prompt.contains("maria two"))
+        #expect(prompt.contains("Klaus Mueller") && prompt.contains("Maria Lopez"))
+        #expect(prompt.contains("valentines-party") && prompt.contains("or none"))
+    }
+}
+#endif

@@ -20,6 +20,9 @@ let package = Package(
         // Headless runner used by tests, CI, and the agent's verification loop.
         .executableTarget(name: "smallville-run", dependencies: ["SmallvilleCore", "SmallvilleFM"]),
         .testTarget(name: "SmallvilleCoreTests", dependencies: ["SmallvilleCore"]),
+        // Adapter mapping, schemas and prompts with hand-built model output; never calls the model.
+        // Every file is wrapped in `#if canImport(FoundationModels)`, so it is empty on Linux.
+        .testTarget(name: "SmallvilleFMTests", dependencies: ["SmallvilleFM", "SmallvilleCore"]),
     ],
     swiftLanguageModes: [.v6]
 )

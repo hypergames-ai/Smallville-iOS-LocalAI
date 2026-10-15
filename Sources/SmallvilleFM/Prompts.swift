@@ -79,7 +79,9 @@ enum Prompts {
     // MARK: - Blocks
 
     private static func locationBlock(_ context: AgentContext) -> String {
-        let places = context.knownLocations.map { "\($0.id.rawValue) (\($0.name))" }.joined(separator: ", ")
+        // The same fallback as Mapping.locationIDs, so the prompt lists exactly the schema's choices.
+        let known = context.knownLocations.isEmpty ? [context.location] : context.knownLocations
+        let places = known.map { "\($0.id.rawValue) (\($0.name))" }.joined(separator: ", ")
         return "Known locations: \(places)"
     }
 
