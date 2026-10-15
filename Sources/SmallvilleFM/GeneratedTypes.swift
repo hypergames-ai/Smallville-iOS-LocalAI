@@ -5,9 +5,6 @@ import FoundationModels
 // The shapes the model fills in. They mirror the core's plain types one-to-one; the mapping
 // lives in FoundationModelsBrain. Descriptions count against the 3,000-token prompt budget,
 // so keep them short.
-//
-// VERIFY: `@Guide` accepting more than one guide (`.minimumCount` and `.maximumCount` together)
-// and `.range` on Int properties. Confirm with the apple-docs subagent on the iOS 27 SDK.
 
 @Generable(description: "A plan for one day as a short chronological outline.")
 struct GeneratedDayPlan {

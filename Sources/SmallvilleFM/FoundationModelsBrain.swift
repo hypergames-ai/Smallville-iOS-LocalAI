@@ -75,7 +75,8 @@ public actor FoundationModelsBrain: AgentBrain {
 
     public func ratePoignancy(_ texts: [String], for profile: AgentProfile) async throws -> BrainResponse<[Int]> {
         guard !texts.isEmpty else {
-            return BrainResponse(value: [], receipt: BrainCallReceipt(inputTokens: 0, outputTokens: 0, wallSeconds: 0))
+            return BrainResponse(
+                value: [], receipt: BrainCallReceipt(inputTokens: 0, outputTokens: 0, wallSeconds: 0))
         }
         let (generated, receipt) = try await respond(
             for: profile, prompt: Prompts.poignancy(texts, for: profile), generating: GeneratedRatings.self)
@@ -95,7 +96,8 @@ public actor FoundationModelsBrain: AgentBrain {
         guard model.isAvailable else {
             throw BrainError.unavailable(String(describing: model.availability))
         }
-        let session = LanguageModelSession(model: model, instructions: Instructions(Prompts.instructions(for: profile)))
+        let session = LanguageModelSession(
+            model: model, instructions: Instructions(Prompts.instructions(for: profile)))
         session.prewarm()
         sessions[profile.id] = session
         return session
@@ -136,7 +138,6 @@ public actor FoundationModelsBrain: AgentBrain {
         for response: LanguageModelSession.Response<Content>, prompt: String, seconds: Double
     ) -> BrainCallReceipt {
         if #available(iOS 27.0, macOS 27.0, *) {
-            // VERIFY: Response.usage shape on the iOS 27 SDK (input/output totalTokenCount).
             return BrainCallReceipt(
                 inputTokens: response.usage.input.totalTokenCount,
                 outputTokens: response.usage.output.totalTokenCount, wallSeconds: seconds)

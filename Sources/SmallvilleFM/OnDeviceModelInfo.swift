@@ -17,7 +17,6 @@ public struct OnDeviceModelInfo: Sendable, Codable, Hashable {
             info.unavailableReason = String(describing: reason)
         }
         if model.isAvailable {
-            // VERIFY: contextSize is documented as iOS 26.0+ (back-deployed before 26.4).
             info.contextSize = model.contextSize
             if #available(iOS 27.0, macOS 27.0, *) {
                 info.variantName = model.variant.displayName
@@ -26,7 +25,9 @@ public struct OnDeviceModelInfo: Sendable, Codable, Hashable {
         return info
     }
 
-    public init(isAvailable: Bool, unavailableReason: String? = nil, variantName: String? = nil, contextSize: Int? = nil) {
+    public init(
+        isAvailable: Bool, unavailableReason: String? = nil, variantName: String? = nil, contextSize: Int? = nil
+    ) {
         self.isAvailable = isAvailable
         self.unavailableReason = unavailableReason
         self.variantName = variantName
