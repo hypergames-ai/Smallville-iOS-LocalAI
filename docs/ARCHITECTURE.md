@@ -79,7 +79,7 @@ Same (seed, whispers, brain) → identical `events`. Dictionaries are iterated t
 
 ## The app
 
-`SimulationController` (`@MainActor @Observable`) owns a `Simulation` and advances it one game-hour at a time in a `Task`, publishing `Snapshot`s and `Discovery`s. The Town scene renders from snapshots only. The Discoveries list is a `NavigationStack` over `Discovery` with evidence drill-down; attendance is shown with the host separated, as in "3 attended (host + 2)", using `Discovery.host` (view change planned for Phase 6). The Benchmark view exists so a human with a phone can produce numbers the agent can reason about.
+`SimulationController` (`@MainActor @Observable`) owns a `Simulation` and advances it one game-hour at a time in a `Task`, no faster than `secondsPerGameHour` (default 0.25 s, the flat-out floor, so quiet night hours can't publish several snapshots in one frame), publishing `Snapshot`s and `Discovery`s. The Town scene renders from snapshots only. The Discoveries list is a `NavigationStack` over `Discovery` with evidence drill-down; attendance is shown with the host separated, as in "3 attended (host + 2)", using `Discovery.host` (view change planned for Phase 6). The Benchmark view exists so a human with a phone can produce numbers the agent can reason about.
 
 ## What is deliberately not here yet
 
