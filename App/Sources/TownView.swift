@@ -18,9 +18,11 @@ struct TownView: View {
                     .padding(.horizontal)
 
                 if let snapshot = controller.snapshot {
-                    Text("\(snapshot.now)  ·  \(snapshot.budget.totalCalls) calls  ·  \(snapshot.eventCount) events")
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "\(snapshot.now)  ·  \(snapshot.budget.totalCalls) calls  ·  \(snapshot.eventCount) events  ·  \(snapshot.brainFailures) failures"
+                    )
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
                 }
                 if let error = controller.lastError {
                     Text(error).font(.footnote).foregroundStyle(.red).padding(.horizontal)

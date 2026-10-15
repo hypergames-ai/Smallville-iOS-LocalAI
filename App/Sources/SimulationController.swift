@@ -20,7 +20,7 @@ final class SimulationController {
     private(set) var isRunning = false
     private(set) var lastError: String?
     var brainChoice: BrainChoice = .stub
-    /// When set, the run loop ends once sim time reaches this many minutes (used by `-autorunMinutes`).
+    /// When set, the run loop ends after this many game-minutes from the start (used by `-autorunMinutes`).
     var stopAfterMinutes: Int?
 
     /// Toggle-friendly view of `brainChoice`; off means the deterministic stub brain.
@@ -67,6 +67,8 @@ final class SimulationController {
         let stopAfterMinutes = self.stopAfterMinutes
         task = Task { [weak self] in
             await simulation.whisper(Self.valentinesParty)
+            // The sim starts mid-morning, so the stop point is measured from the start, not from minute 0.
+            let startMinutes = await simulation.now.minutes
             while !Task.isCancelled {
                 do {
                     try await simulation.run(minutes: 60)
@@ -80,7 +82,7 @@ final class SimulationController {
                     self?.snapshot = snapshot
                     self?.discoveries = discoveries
                 }
-                if let stopAfterMinutes, snapshot.now.minutes >= stopAfterMinutes { break }
+                if let stopAfterMinutes, snapshot.now.minutes - startMinutes >= stopAfterMinutes { break }
             }
             await MainActor.run {
                 self?.isRunning = false
