@@ -106,6 +106,48 @@ struct HourPlanTests {
         }
     }
 
+    @Test("the location list leads with the daytime places: workplace, favorite spot, storyline venue, then home")
+    func knownLocationsOrder() async throws {
+        let picnic = Storyline(
+            id: StorylineID("picnic"), title: "a picnic in the park", seedText: "There is a picnic in the park.",
+            seededIn: AgentProfile.maria.id, seededAt: SimTime(minutes: 7 * 60), targetLocation: WorldMap.park,
+            eventTime: SimTime(minutes: 12 * 60))
+        let contexts = Recorder<AgentContext>()
+        let brain = ScriptedBrain(observe: { await contexts.add($0) })
+        let simulation = Simulation(world: .smallvilleSubset(), profiles: [.maria], brain: brain)
+        await simulation.whisper(picnic)
+        try await simulation.run(minutes: 3 * 60)
+
+        let first = try #require(await contexts.values.first)
+        let maria = AgentProfile.maria
+        #expect(
+            first.knownLocations.prefix(4).map(\.id) == [
+                maria.workplace, maria.favoriteSpot, WorldMap.park, maria.home,
+            ])
+    }
+
+    @Test("storyline venues never crowd home out of a tight location cap")
+    func homeSurvivesTheCap() async throws {
+        let contexts = Recorder<AgentContext>()
+        let brain = ScriptedBrain(observe: { await contexts.add($0) })
+        var configuration = Simulation.Configuration()
+        configuration.maxLocationsInContext = 3
+        let simulation = Simulation(
+            world: .smallvilleSubset(), profiles: [.maria], brain: brain, configuration: configuration)
+        for (name, venue) in [("picnic", WorldMap.park), ("quiz", WorldMap.pub)] {
+            await simulation.whisper(
+                Storyline(
+                    id: StorylineID(name), title: name, seedText: "There is a \(name).",
+                    seededIn: AgentProfile.maria.id, seededAt: SimTime(minutes: 7 * 60), targetLocation: venue,
+                    eventTime: SimTime(minutes: 12 * 60)))
+        }
+        try await simulation.run(minutes: 3 * 60)
+
+        let first = try #require(await contexts.values.first)
+        let maria = AgentProfile.maria
+        #expect(first.knownLocations.map(\.id) == [maria.workplace, maria.favoriteSpot, maria.home])
+    }
+
     @Test("the stub's split hours produce two actions and the day plan entry travels in the context")
     func stubDecomposition() async throws {
         let contexts = Recorder<AgentContext>()

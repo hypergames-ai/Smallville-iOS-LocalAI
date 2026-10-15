@@ -32,6 +32,8 @@ Smallville's loop is kept, its call structure is not.
 
 Every brain method returns `BrainResponse<T>` = value + `BrainCallReceipt` (tokens, wall time). On the device, each call is a fresh session with the agent's persona as instructions (the initiator's for a conversation; ADR 13); receipts carry the response's real `usage` on iOS 27 (26.4: `tokenCount`, unverified on a device; earlier: an estimate). Hour plans and conversations are generated against a `DynamicGenerationSchema` built per call, so locations, storyline ids and speaker names can only be known values, then decoded into the `@Generable` mirror types. `Simulation.record` feeds `CallBudget`; `budget.summary()` is the number the tests and the runner print. A conversation is one call in the totals and half a call on each participant's agent-day: the per-agent limit is a worst case, and either participant's device would run the same inference.
 
+An agent's location list (`AgentContext.knownLocations`) runs workplace, favorite spot, known storyline venues, home, then public places, and that is also the hour-plan schema's choice order: daytime places first, so the list itself doesn't pull agents home.
+
 ## Memory
 
 `MemoryStream` is an append-only array of `MemoryNode` (kind, text, poignancy 1–10, embedding, `Provenance`, `storylines`). Retrieval is the paper's score: normalized recency (exponential decay on last access) + importance + relevance (cosine), top-k, and it touches `lastAccessed`.

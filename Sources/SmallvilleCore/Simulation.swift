@@ -218,11 +218,14 @@ public actor Simulation {
             dayPlan: runtime.dayPlan, currentEntry: runtime.dayPlan?.entry(at: now.hour))
     }
 
-    /// The places an agent may choose from, in a fixed order: its own three, any storyline venue
-    /// it knows about, then public places by id, capped so the prompt does not grow with the town.
+    /// The places an agent may choose from, in a fixed order: workplace, favorite spot, any
+    /// storyline venue it knows about, home, then public places by id, capped so the prompt does
+    /// not grow with the town. The order is also the hour-plan schema's choice order, so daytime
+    /// places come before home.
     private func knownLocations(for runtime: AgentRuntime, storylines: [Storyline]) -> [Location] {
-        var ids = [runtime.profile.home, runtime.profile.workplace, runtime.profile.favoriteSpot]
+        var ids = [runtime.profile.workplace, runtime.profile.favoriteSpot]
         ids += storylines.compactMap(\.targetLocation)
+        ids.append(runtime.profile.home)
         ids += world.publicLocations.map(\.id)
         var seen = Set<LocationID>()
         var result: [Location] = []
@@ -230,6 +233,11 @@ public actor Simulation {
             guard let location = world.location(id) else { continue }
             result.append(location)
             if result.count == configuration.maxLocationsInContext { break }
+        }
+        // Venues can fill a tight cap before home is reached; home is never cut, it takes the last slot.
+        if let home = world.location(runtime.profile.home), !result.contains(home) {
+            if result.count >= configuration.maxLocationsInContext, !result.isEmpty { result.removeLast() }
+            result.append(home)
         }
         return result
     }
