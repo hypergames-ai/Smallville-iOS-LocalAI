@@ -57,7 +57,7 @@ Embeddings: `Embedder` protocol in the core; `HashingEmbedder` (bag of words, de
 
 - **knows** — agents with any memory tagged with the storyline
 - **diffusion** — edges from `.told(by:at:)` provenance
-- **invited / accepted** — `SocialAct`s in `.conversed` events with that storyline
+- **invited / accepted** — `SocialAct`s in `.conversed` events with that storyline. The simulation keeps an invite only if the inviter was whispered the storyline or was invited to it earlier (hearing of it is not enough), and an accept only if it answers such an agent. A kept accept from someone not yet invited, with no invite before it, gets an invite inserted ahead of it: the model often files "would you help with the party?" as `plan`.
 - **attended** — agents with at least `minimumDwellSamples` (default 2, i.e. 20 min) `PositionSample`s at the storyline's `targetLocation` within ±60 min of `eventTime`. The host is included, not excluded; `Discovery.host` names them so the UI can label them.
 - **diffusion** edges are deduplicated to the earliest told-by time per (teller, listener) pair.
 

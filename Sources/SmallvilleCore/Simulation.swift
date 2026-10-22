@@ -87,6 +87,9 @@ public actor Simulation {
     public private(set) var storylines: [StorylineID: Storyline] = [:]
 
     private var agents: [AgentID: AgentRuntime] = [:]
+    /// Per storyline, who may invite others: whoever it was whispered to, plus anyone they
+    /// (transitively) invited. Hearing about an event is not the same as being invited to it.
+    private var mayInvite: [StorylineID: Set<AgentID>] = [:]
     /// Agents in a fixed order so every loop is deterministic.
     private let order: [AgentID]
     private let brain: any AgentBrain
@@ -118,6 +121,7 @@ public actor Simulation {
         storylines[storyline.id] = storyline
         let body = text ?? storyline.seedText
         guard var runtime = agents[storyline.seededIn] else { return }
+        mayInvite[storyline.id, default: []].insert(storyline.seededIn)
         runtime.memory.append(
             kind: .whisper, text: body, poignancy: 8, provenance: .whispered, storylines: [storyline.id],
             embedding: embedder.embed(body), at: now)
@@ -458,14 +462,20 @@ public actor Simulation {
                 guard participants.contains(act.from), participants.contains(act.to), act.from != act.to else {
                     return false
                 }
-                // Nobody invites to something they had not heard of, and an acceptance answers
-                // someone who had; otherwise the model made the act up.
+                // Only someone who was whispered the storyline or invited to it can invite (having
+                // merely heard of it is not enough), and an acceptance answers someone who could;
+                // otherwise the model made the act up. Judged against standing before this talk.
                 guard let storyline = act.storyline else { return true }
                 switch act.kind {
-                case .invite: return knewBefore[act.from]?.contains(storyline) ?? false
-                case .accept: return knewBefore[act.to]?.contains(storyline) ?? false
+                case .invite: return canInvite(act.from, to: storyline, knewBefore: knewBefore)
+                case .accept: return canInvite(act.to, to: storyline, knewBefore: knewBefore)
                 default: return true
                 }
+            }
+            conversation.acts = impliedInvites(in: conversation.acts)
+            for act in conversation.acts where act.kind == .invite {
+                guard let storyline = act.storyline else { continue }
+                mayInvite[storyline, default: []].insert(act.to)
             }
             events.append(.conversed(conversation, at: now, location: location))
             remember(
@@ -476,6 +486,33 @@ public actor Simulation {
         } catch let error as BrainError {
             fail(a, .converse, error)
         }
+    }
+
+    /// The model often files an invitation under another kind ("would you help with the
+    /// party?" as `plan`). An accepted act toward someone who may invite is an invitation in
+    /// effect, so when the acceptor was not invited yet and no invite precedes the accept, one
+    /// is inserted before it. Acts are already filtered, so the accept is known to be valid.
+    private func impliedInvites(in acts: [SocialAct]) -> [SocialAct] {
+        var result: [SocialAct] = []
+        for act in acts {
+            if act.kind == .accept, let storyline = act.storyline,
+                !(mayInvite[storyline]?.contains(act.from) ?? false),
+                !result.contains(where: {
+                    $0.kind == .invite && $0.storyline == storyline && $0.from == act.to && $0.to == act.from
+                })
+            {
+                result.append(
+                    SocialAct(kind: .invite, from: act.to, to: act.from, topic: act.topic, storyline: storyline))
+            }
+            result.append(act)
+        }
+        return result
+    }
+
+    private func canInvite(
+        _ id: AgentID, to storyline: StorylineID, knewBefore: [AgentID: Set<StorylineID>]
+    ) -> Bool {
+        (knewBefore[id]?.contains(storyline) ?? false) && (mayInvite[storyline]?.contains(id) ?? false)
     }
 
     private func knownStorylines(of id: AgentID) -> Set<StorylineID> {

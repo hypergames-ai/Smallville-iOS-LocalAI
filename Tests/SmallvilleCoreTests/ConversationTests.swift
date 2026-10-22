@@ -287,6 +287,68 @@ struct ConversationTests {
         #expect(x.diffusion.isEmpty)
     }
 
+    @Test("hearing of an event is not being invited: an uninvited listener cannot invite anyone")
+    func uninvitedListenerCannotInvite() async throws {
+        // Ana tells Ben about x without inviting him; once both know it, the model has Ben invite Ana.
+        let brain = ScriptedBrain(
+            planHour: Self.staying(),
+            converse: { request in
+                let x = StorylineID("x")
+                let bothKnow = [request.initiator, request.partner].allSatisfy {
+                    $0.activeStorylines.contains { $0.id == x }
+                }
+                let acts =
+                    bothKnow
+                    ? [
+                        SocialAct(kind: .invite, from: Self.ben, to: Self.ana, topic: "x", storyline: x),
+                        SocialAct(kind: .accept, from: Self.ana, to: Self.ben, topic: "x", storyline: x),
+                    ]
+                    : [SocialAct(kind: .inform, from: Self.ana, to: Self.ben, topic: "x", storyline: x)]
+                return Conversation(
+                    initiator: request.initiator.profile.id, partner: request.partner.profile.id,
+                    turns: [ConversationTurn(speaker: request.initiator.profile.id, text: "hello")], acts: acts,
+                    conveyedStorylines: bothKnow ? [] : [x], initiatorSummary: "we talked about x",
+                    partnerSummary: "we talked about x")
+            })
+        let simulation = Simulation(world: .smallvilleSubset(), profiles: Self.cafeRegulars(), brain: brain)
+        await simulation.whisper(Self.storyline("x", seededIn: Self.ana))
+        try await simulation.run(minutes: 6 * 60)
+
+        #expect(Self.conversations(in: await simulation.events).count >= 2, "Ben had a chance to invite")
+        let x = try #require(await simulation.discoveries().first)
+        #expect(x.knows == [Self.ana, Self.ben], "Ben did hear of x")
+        #expect(x.invited.isEmpty, "Ben was never invited, so his invitation is dropped")
+        #expect(x.accepted.isEmpty)
+    }
+
+    @Test("accepting the host's ask counts as being invited even when the model filed the ask as a plan")
+    func acceptImpliesInvite() async throws {
+        // As seen on device: Isabella asks Maria to help with the party (kind `plan`), Maria accepts.
+        let x = StorylineID("x")
+        let brain = ScriptedBrain(
+            planHour: Self.staying(),
+            converse: Self.scriptedTalk(
+                acts: [
+                    SocialAct(kind: .plan, from: Self.ana, to: Self.ben, topic: "x help", storyline: x),
+                    SocialAct(kind: .accept, from: Self.ben, to: Self.ana, topic: "x help", storyline: x),
+                ],
+                conveyed: [x]))
+        let simulation = Simulation(world: .smallvilleSubset(), profiles: Self.cafeRegulars(), brain: brain)
+        await simulation.whisper(Self.storyline("x", seededIn: Self.ana))
+        try await simulation.run(minutes: 6 * 60)
+
+        let talks = Self.conversations(in: await simulation.events).map(\.0)
+        #expect(talks.count >= 2)
+        let first = try #require(talks.first)
+        #expect(first.acts.map(\.kind) == [.plan, .invite, .accept], "the invite goes right before the accept")
+        #expect(talks.dropFirst().allSatisfy { !$0.acts.contains { $0.kind == .invite } }, "Ben is invited once")
+        let discovery = try #require(await simulation.discoveries().first)
+        #expect(discovery.invited == [Self.ben])
+        #expect(discovery.accepted == [Self.ben])
+        let remembered = await simulation.memories(of: Self.ana).filter { $0.text.contains(" invited ") }
+        #expect(remembered.count == 1, "Ana remembers inviting Ben")
+    }
+
     @Test("someone who has set off for elsewhere does not start a conversation where they were")
     func travelersAreNotPresent() async throws {
         // Both start at the cafe at 07:00; Ana's 07:00 plan is the park, a one-tick walk.
