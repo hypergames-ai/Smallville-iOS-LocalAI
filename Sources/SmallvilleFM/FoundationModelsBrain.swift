@@ -11,6 +11,9 @@ import os
 public actor FoundationModelsBrain: AgentBrain {
     private let model: SystemLanguageModel
     private let log = Logger(subsystem: "smallville", category: "fm")
+    /// The full text of every call (instructions, prompt, schema, response), category "trace".
+    private let trace = Logger(subsystem: "smallville", category: "trace")
+    private var traceCount = 0
 
     public init(model: SystemLanguageModel = .default) {
         self.model = model
@@ -84,25 +87,35 @@ public actor FoundationModelsBrain: AgentBrain {
         var retried = false
         while true {
             let text = prompt(limit)
+            traceCount += 1
+            let call = "#\(traceCount) \(kind.rawValue) \(profile.id.rawValue)"
+            traceSection("\(call) INSTRUCTIONS", instructions)
+            traceSection("\(call) PROMPT", text)
+            traceSection("\(call) SCHEMA", Self.json(schema ?? Content.generationSchema))
             let session = LanguageModelSession(model: model, instructions: Instructions(instructions))
             let clock = ContinuousClock()
             let start = clock.now
             do {
                 let content: Content
                 let receipt: BrainCallReceipt
+                let raw: String
                 if let schema {
                     let response = try await session.respond(to: text, schema: schema)
                     content = try Content(response.content)
+                    raw = response.rawContent.jsonString
                     receipt = await self.receipt(
                         for: response, instructions: instructions, prompt: text, schema: schema,
                         seconds: seconds(since: start, clock))
                 } else {
                     let response = try await session.respond(to: text, generating: type)
                     content = response.content
+                    raw = response.rawContent.jsonString
                     receipt = await self.receipt(
                         for: response, instructions: instructions, prompt: text, schema: Content.generationSchema,
                         seconds: seconds(since: start, clock))
                 }
+                traceSection(
+                    "\(call) RESPONSE (in \(receipt.inputTokens) out \(receipt.outputTokens) tokens)", raw)
                 log.debug(
                     "\(kind.rawValue, privacy: .public) \(profile.id.rawValue, privacy: .public): in \(receipt.inputTokens) out \(receipt.outputTokens) \(receipt.wallSeconds, format: .fixed(precision: 1))s"
                 )
@@ -138,6 +151,40 @@ public actor FoundationModelsBrain: AgentBrain {
         log.error(
             "\(kind?.rawValue ?? "schema", privacy: .public) failed: \(String(describing: error), privacy: .public)")
         return error
+    }
+
+    // MARK: - Trace
+
+    /// Logs `text` under `header`, split on line boundaries into pieces of at most 800 bytes.
+    // VERIFY: the unified log is said to truncate long messages (around 1 KB); 800 is a guess at a safe size.
+    private func traceSection(_ header: String, _ text: String) {
+        var pieces: [String] = []
+        var current = ""
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            var line = String(line)
+            while line.utf8.count > 800 {
+                let head = String(line.prefix(700))
+                pieces.append(head)
+                line = String(line.dropFirst(head.count))
+            }
+            if !current.isEmpty, current.utf8.count + line.utf8.count + 1 > 800 {
+                pieces.append(current)
+                current = ""
+            }
+            current += current.isEmpty ? line : "\n" + line
+        }
+        pieces.append(current)
+        for (index, piece) in pieces.enumerated() {
+            trace.debug("\(header, privacy: .public) [\(index + 1)/\(pieces.count)]\n\(piece, privacy: .public)")
+        }
+    }
+
+    /// The schema as the JSON the framework encodes it to, keys sorted.
+    private static func json(_ schema: GenerationSchema) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(schema) else { return schema.debugDescription }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func seconds(since start: ContinuousClock.Instant, _ clock: ContinuousClock) -> Double {
