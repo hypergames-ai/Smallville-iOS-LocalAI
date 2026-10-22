@@ -165,7 +165,7 @@ let valentinesParty = Storyline(
     seededIn: AgentProfile.isabella.id,
     seededAt: SimTime(minutes: 7 * 60),
     targetLocation: WorldMap.hobbsCafe,
-    eventTime: SimTime(minutes: SimTime.minutesPerDay + 17 * 60))
+    eventTime: SimTime(minutes: SimTime.minutesPerDay + 17 * 60), durationMinutes: 120)
 
 do {
     let options = try Options.parse(CommandLine.arguments)

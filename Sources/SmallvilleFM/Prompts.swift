@@ -40,7 +40,8 @@ enum Prompts {
             \(locationBlock(context))
             \(storylineBlock(context))
             \(memoryBlock(context, limit: memoryLimit))
-            Do this hour's task where it says. Otherwise: a storyline event at its venue and time, work or study at \
+            Do this hour's task where it says. Otherwise: a storyline event at its venue while it lasts (once it is \
+            over, move on), work or study at \
             the workplace, meals and breaks at the favorite spot, home at night.
             Decide what \(context.profile.name) does for the next hour.
             """
@@ -100,7 +101,10 @@ enum Prompts {
         if id == profile.workplace { roles.append("workplace") }
         if id == profile.favoriteSpot { roles.append("favorite spot") }
         if id == profile.home { roles.append("home") }
-        if context.activeStorylines.contains(where: { $0.targetLocation == id }) { roles.append("storyline venue") }
+        // Only an event still to come or under way makes its place a venue.
+        if context.activeStorylines.contains(where: { $0.targetLocation == id && !$0.isOver(at: context.now) }) {
+            roles.append("storyline venue")
+        }
         return roles
     }
 
@@ -120,6 +124,13 @@ enum Prompts {
             var line = "\(storyline.id.rawValue): \(storyline.title)"
             if let time = storyline.eventTime, let location = storyline.targetLocation {
                 line += " at \(location.rawValue) on \(time)"
+                if let end = storyline.eventEnd {
+                    // The day is repeated only when the event runs past midnight.
+                    line +=
+                        end.day == time.day
+                        ? String(format: " until %02d:%02d", end.hour, end.minuteOfHour) : " until \(end)"
+                }
+                if storyline.isOver(at: context.now) { line += " (over)" }
             }
             return line
         }

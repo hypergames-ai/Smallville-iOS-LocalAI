@@ -14,7 +14,7 @@ enum Fixtures {
         id: StorylineID("valentines-party"), title: "Valentine's Day party at Hobbs Cafe",
         seedText: "Isabella is throwing a party.", seededIn: AgentProfile.isabella.id,
         seededAt: SimTime(minutes: 7 * 60), targetLocation: WorldMap.hobbsCafe,
-        eventTime: SimTime(minutes: 24 * 60 + 17 * 60))
+        eventTime: SimTime(minutes: 24 * 60 + 17 * 60), durationMinutes: 120)
 
     static func context(
         _ profile: AgentProfile = .klaus, memories: [String] = [], knownLocations: [Location]? = nil,

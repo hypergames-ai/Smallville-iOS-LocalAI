@@ -205,12 +205,13 @@ public actor Simulation {
     private func makeContext(for runtime: inout AgentRuntime, query: String) -> AgentContext {
         let memories = runtime.memory.retrieve(
             query: embedder.embed(query), now: now, limit: configuration.retrievalLimit)
-        // Upcoming events first (soonest first), then past ones (most recent first), then the
-        // undated; the cap must never let old events crowd out a new one.
+        // Events under way, then upcoming ones (soonest first), then those that are over (most
+        // recently ended first), then the undated; the cap must never let old events crowd out a
+        // new one, nor drop one that is still going on.
         func rank(_ storyline: Storyline) -> (Int, Int, StorylineID) {
-            guard let time = storyline.eventTime else { return (2, 0, storyline.id) }
-            return time >= now
-                ? (0, time.minutes - now.minutes, storyline.id) : (1, now.minutes - time.minutes, storyline.id)
+            guard let time = storyline.eventTime, let end = storyline.eventEnd else { return (2, 0, storyline.id) }
+            return storyline.isOver(at: now)
+                ? (1, now.minutes - end.minutes, storyline.id) : (0, max(0, time.minutes - now.minutes), storyline.id)
         }
         let known = Array(
             storylines.values.filter { runtime.memory.knows($0.id) }
@@ -233,7 +234,8 @@ public actor Simulation {
     /// places come before home.
     private func knownLocations(for runtime: AgentRuntime, storylines: [Storyline]) -> [Location] {
         var ids = [runtime.profile.workplace, runtime.profile.favoriteSpot]
-        ids += storylines.compactMap(\.targetLocation)
+        // An event that is over no longer pulls its venue up among the daytime places.
+        ids += storylines.filter { !$0.isOver(at: now) }.compactMap(\.targetLocation)
         ids.append(runtime.profile.home)
         ids += world.publicLocations.map(\.id)
         var seen = Set<LocationID>()

@@ -11,10 +11,15 @@ public struct Storyline: Hashable, Sendable, Codable, Identifiable {
     /// Where and when the storyline's event happens, if it has one (used for attendance).
     public var targetLocation: LocationID?
     public var eventTime: SimTime?
+    /// How long the event lasts; nil means `defaultDurationMinutes`.
+    public var durationMinutes: Int?
+
+    /// An event without a stated duration lasts an hour.
+    public static let defaultDurationMinutes = 60
 
     public init(
         id: StorylineID, title: String, seedText: String, seededIn: AgentID, seededAt: SimTime,
-        targetLocation: LocationID? = nil, eventTime: SimTime? = nil
+        targetLocation: LocationID? = nil, eventTime: SimTime? = nil, durationMinutes: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -23,6 +28,24 @@ public struct Storyline: Hashable, Sendable, Codable, Identifiable {
         self.seededAt = seededAt
         self.targetLocation = targetLocation
         self.eventTime = eventTime
+        self.durationMinutes = durationMinutes
+    }
+
+    /// When the event is over, if it has a time.
+    public var eventEnd: SimTime? {
+        eventTime?.advanced(by: max(0, durationMinutes ?? Self.defaultDurationMinutes))
+    }
+
+    /// True from the event's start up to, not including, its end.
+    public func isUnderway(at time: SimTime) -> Bool {
+        guard let start = eventTime, let end = eventEnd else { return false }
+        return time >= start && time < end
+    }
+
+    /// True from the event's end on; false for a storyline without an event.
+    public func isOver(at time: SimTime) -> Bool {
+        guard let end = eventEnd else { return false }
+        return time >= end
     }
 }
 

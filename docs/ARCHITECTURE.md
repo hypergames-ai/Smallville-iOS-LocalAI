@@ -34,7 +34,7 @@ The day- and hour-plan prompts name the profile's workplace, favorite spot and h
 
 Every brain method returns `BrainResponse<T>` = value + `BrainCallReceipt` (tokens, wall time). On the device, each call is a fresh session with the agent's persona as instructions (the initiator's for a conversation; ADR 13); receipts carry the response's real `usage` on iOS 27 (26.4: `tokenCount`, unverified on a device; earlier: an estimate). Hour plans and conversations are generated against a `DynamicGenerationSchema` built per call, so locations, storyline ids and speaker names can only be known values, then decoded into the `@Generable` mirror types. `Simulation.record` feeds `CallBudget`; `budget.summary()` is the number the tests and the runner print. A conversation is one call in the totals and half a call on each participant's agent-day: the per-agent limit is a worst case, and either participant's device would run the same inference.
 
-An agent's location list (`AgentContext.knownLocations`) runs workplace, favorite spot, known storyline venues, home, then public places, and that is also the hour-plan schema's choice order: daytime places first, so the list itself doesn't pull agents home.
+An agent's location list (`AgentContext.knownLocations`) runs workplace, favorite spot, known storyline venues, home, then public places, and that is also the hour-plan schema's choice order: daytime places first, so the list itself doesn't pull agents home. A storyline event has a start and a duration (`durationMinutes`, an hour if unset): its venue is listed and tagged "storyline venue" only until the event is over, and the prompts show the end time and mark a past event "(over)", so agents move on instead of staying at the venue.
 
 ## Memory
 

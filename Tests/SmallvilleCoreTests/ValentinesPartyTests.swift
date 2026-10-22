@@ -14,7 +14,7 @@ struct ValentinesPartyTests {
         seededIn: AgentProfile.isabella.id,
         seededAt: SimTime(minutes: 7 * 60),
         targetLocation: WorldMap.hobbsCafe,
-        eventTime: SimTime(minutes: SimTime.minutesPerDay + 17 * 60))
+        eventTime: SimTime(minutes: SimTime.minutesPerDay + 17 * 60), durationMinutes: 120)
 
     static func makeSimulation(seed: UInt64 = 7) -> Simulation {
         var configuration = Simulation.Configuration()

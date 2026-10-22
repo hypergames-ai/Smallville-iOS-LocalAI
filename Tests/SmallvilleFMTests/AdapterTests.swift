@@ -204,6 +204,36 @@ struct PromptTests {
         }
     }
 
+    @Test("an event shows its end time, and once over it is marked over and its place is no longer a venue")
+    func eventEndInPrompts() throws {
+        var context = try Fixtures.context(
+            .maria, knownLocations: Fixtures.world.allLocations, storylines: [Fixtures.party])
+        let line = "valentines-party: Valentine's Day party at Hobbs Cafe at \(WorldMap.hobbsCafe.rawValue) on "
+        let start = Fixtures.party.eventTime.map(String.init(describing:)) ?? ""
+        let before = Prompts.hourPlan(context, dayPlan: DayPlan(wakeHour: 9, entries: []))
+        #expect(before.contains(line + "\(start) until 19:00\n"))
+        #expect(before.contains("Hobbs Cafe, favorite spot, storyline venue"))
+
+        context.now = SimTime(minutes: 24 * 60 + 18 * 60 + 50)
+        let during = Prompts.hourPlan(context, dayPlan: DayPlan(wakeHour: 9, entries: []))
+        #expect(during.contains(line + "\(start) until 19:00\n"), "still on at 18:50, not over")
+        #expect(during.contains("Hobbs Cafe, favorite spot, storyline venue"))
+
+        context.now = SimTime(minutes: 24 * 60 + 19 * 60)
+        let after = Prompts.hourPlan(context, dayPlan: DayPlan(wakeHour: 9, entries: []))
+        #expect(after.contains("until 19:00 (over)"))
+        #expect(after.contains("the_ville:hobbs_cafe (Hobbs Cafe, favorite spot)"))
+        #expect(!after.contains("storyline venue"))
+
+        let lateParty = Storyline(
+            id: StorylineID("late"), title: "a late party", seedText: "A late party.", seededIn: AgentProfile.maria.id,
+            seededAt: SimTime(minutes: 7 * 60), targetLocation: WorldMap.pub,
+            eventTime: SimTime(minutes: 23 * 60), durationMinutes: 120)
+        let overnight = Prompts.hourPlan(
+            try Fixtures.context(.maria, storylines: [lateParty]), dayPlan: DayPlan(wakeHour: 9, entries: []))
+        #expect(overnight.contains("on Day 1 23:00 until Day 2 01:00"), "an end past midnight names its day")
+    }
+
     @Test("the hour-plan prompt marks the agent's own places and the storyline venue")
     func hourPlanTagsRoles() throws {
         let context = try Fixtures.context(

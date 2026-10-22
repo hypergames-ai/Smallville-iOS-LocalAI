@@ -28,10 +28,13 @@ public struct StubBrain: AgentBrain {
         let profile = context.profile
         let hour = context.now.hour
 
-        // A known storyline event happening this hour wins over routine.
+        // A known storyline event under way at the start of this hour, or starting during it,
+        // wins over routine. The stub plans whole hours, so an event with a mid-hour start or end
+        // is rounded out to the hours it touches; it is never attended once over.
+        let hourStart = SimTime(minutes: context.now.minutes - context.now.minuteOfHour)
         let happeningNow = context.activeStorylines.first { storyline in
             guard let time = storyline.eventTime, storyline.targetLocation != nil else { return false }
-            return time.day == context.now.day && time.hour == hour
+            return storyline.isUnderway(at: hourStart) || (time.day == hourStart.day && time.hour == hour)
         }
         if let storyline = happeningNow, let location = storyline.targetLocation {
             let action = PlannedAction(

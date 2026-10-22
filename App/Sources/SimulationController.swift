@@ -52,7 +52,7 @@ final class SimulationController {
         seededIn: AgentProfile.isabella.id,
         seededAt: SimTime(minutes: 7 * 60),
         targetLocation: WorldMap.hobbsCafe,
-        eventTime: SimTime(minutes: SimTime.minutesPerDay + 17 * 60))
+        eventTime: SimTime(minutes: SimTime.minutesPerDay + 17 * 60), durationMinutes: 120)
 
     /// Probes the on-device model again and publishes the result.
     @discardableResult
