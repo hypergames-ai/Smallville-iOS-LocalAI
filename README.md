@@ -25,7 +25,7 @@ In this run: Isabella was forbidden to talk to Klaus (Isabella ⟂ Klaus option 
 swift test                                   # core logic, no model needed
 swift run smallville-run --minutes 60 --agents 3        # headless sim, stub brain
 swift run smallville-run --minutes 60 --agents 3 --fm   # headless sim, Mac's on-device model
-cd App && xcodegen generate && open Smallville.xcodeproj
+cd App && xcodegen generate && open Smallville.xcodeproj # generate xcodeproj for iOS builds
 ```
 
 ## Art assets
