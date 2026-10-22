@@ -10,6 +10,19 @@ import FoundationModels
 // (locations, storylines and speakers limited to known values) and decoded into these types,
 // so property names here and there must match.
 
+@Generable(description: "What the person carries into a new day.")
+struct GeneratedIdentityRevision {
+    @Guide(description: "What to remember while planning today, one sentence")
+    var planNote: String
+    @Guide(description: "How they feel about recent events, one sentence")
+    var thoughtNote: String
+    @Guide(
+        description:
+            "Updated status in third person, under 60 words; keep lasting facts, add today's commitments with time and place"
+    )
+    var currently: String
+}
+
 @Generable(description: "A plan for one day as a short chronological outline.")
 struct GeneratedDayPlan {
     @Guide(description: "Hour the person wakes up", .range(5...10))

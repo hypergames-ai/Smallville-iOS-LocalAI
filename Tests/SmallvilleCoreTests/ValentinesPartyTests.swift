@@ -73,6 +73,9 @@ struct ValentinesPartyTests {
     func refusedCallIsSkipped() async throws {
         struct RefusingBrain: AgentBrain {
             let inner = StubBrain()
+            func reviseIdentity(_ context: AgentContext) async throws -> BrainResponse<IdentityRevision> {
+                try await inner.reviseIdentity(context)
+            }
             func planDay(_ context: AgentContext) async throws -> BrainResponse<DayPlan> {
                 try await inner.planDay(context)
             }

@@ -22,13 +22,14 @@ Smallville's loop is kept, its call structure is not.
 
 | Stage | Original (reverie) | Here | Calls/agent-day |
 | --- | --- | --- | --- |
+| Identity revision | `revise_identity`: 3 calls at the start of each new day (plan note, thought note, `currently`) | 1 call at wake from day 2, before the day plan → `IdentityRevision`; replaces `currently` and stores the notes as a `.plan` memory; `currently` sits at the end of every prompt, not in the instructions (ADR 14) | 1 |
 | Day plan | 1 call + hourly decomposition calls | 1 call at wake → `DayPlan` | 1 |
 | Hour plan | ~8 calls per action (task decomposition, sector, arena, object, emoji, triple, state) | 1 call per waking hour → `HourPlan` with 1–3 `PlannedAction`s, each carrying location, emoji and event triple | ~15 |
 | Perception | poignancy call per observation | observations appended with a default score; one batched `ratePoignancy` call every 4 waking hours | ~4 |
 | Reaction gating | model decides whether to react | rules: co-located, awake, cooldown, per-day cap, not a `noContactPairs` pair | 0 |
 | Conversation | 1 call per utterance | 1 call → whole `Conversation` (turns, `SocialAct`s, conveyed storylines, two summaries) | ≤4 |
 | Reflection | several calls per trigger | 1 call when accumulated importance crosses a threshold, at most 3 per day and ≥1 h apart → `[Reflection]` | ~2, cap 3 |
-| **Total** | 600–1,000 | | **~26, budget 45** |
+| **Total** | 600–1,000 | | **~27, budget 45** |
 
 The day- and hour-plan prompts name the profile's workplace, favorite spot and home, and tag them (plus storyline venues) in the location list, so the model plans the day where the profile implies; nothing in the core forces a location.
 

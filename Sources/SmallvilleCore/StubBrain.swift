@@ -9,6 +9,19 @@ public struct StubBrain: AgentBrain {
 
     public init() {}
 
+    /// Keeps `currently` as it is; the plan note names the first storyline event still ahead today.
+    public func reviseIdentity(_ context: AgentContext) async throws -> BrainResponse<IdentityRevision> {
+        let now = context.now
+        let today = context.activeStorylines.first { storyline in
+            guard let time = storyline.eventTime else { return false }
+            return time.day == now.day && time >= now
+        }
+        let planNote = today.map { "Remember \($0.title) later today." } ?? "A usual day."
+        let revision = IdentityRevision(
+            planNote: planNote, thoughtNote: "Feeling settled.", currently: context.profile.currently)
+        return BrainResponse(value: revision, receipt: receipt(for: context, outputTokens: 100))
+    }
+
     public func planDay(_ context: AgentContext) async throws -> BrainResponse<DayPlan> {
         let profile = context.profile
         let plan = DayPlan(

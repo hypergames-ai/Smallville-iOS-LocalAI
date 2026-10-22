@@ -2,6 +2,7 @@ import Foundation
 
 /// The kinds of brain call the simulation makes. Adding a case is a budget decision.
 public enum BrainCallKind: String, Hashable, Sendable, Codable, CaseIterable {
+    case reviseIdentity
     case planDay
     case planHour
     case converse

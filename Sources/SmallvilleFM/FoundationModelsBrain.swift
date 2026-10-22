@@ -21,6 +21,14 @@ public actor FoundationModelsBrain: AgentBrain {
 
     // MARK: - AgentBrain
 
+    public func reviseIdentity(_ context: AgentContext) async throws -> BrainResponse<IdentityRevision> {
+        let (generated, receipt) = try await respond(
+            .reviseIdentity, for: context.profile, decoding: GeneratedIdentityRevision.self
+        ) { Prompts.identityRevision(context, memoryLimit: $0) }
+        return BrainResponse(
+            value: Mapping.identityRevision(generated, previous: context.profile.currently), receipt: receipt)
+    }
+
     public func planDay(_ context: AgentContext) async throws -> BrainResponse<DayPlan> {
         let (generated, receipt) = try await respond(
             .planDay, for: context.profile, decoding: GeneratedDayPlan.self

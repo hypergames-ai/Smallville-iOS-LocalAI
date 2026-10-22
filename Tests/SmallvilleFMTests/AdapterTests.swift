@@ -151,6 +151,19 @@ struct MappingTests {
                 ))
     }
 
+    @Test("an identity revision maps as generated, and a blank status keeps the previous one")
+    func identityRevision() throws {
+        let generated = try Fixtures.decode(
+            GeneratedIdentityRevision.self,
+            #"{"planNote": "Go to the party.", "thoughtNote": "Excited.", "currently": "Klaus plans to attend."}"#)
+        #expect(
+            Mapping.identityRevision(generated, previous: "old")
+                == IdentityRevision(planNote: "Go to the party.", thoughtNote: "Excited.", currently: "Klaus plans to attend."))
+        let blank = try Fixtures.decode(
+            GeneratedIdentityRevision.self, #"{"planNote": "", "thoughtNote": "", "currently": "  \n"}"#)
+        #expect(Mapping.identityRevision(blank, previous: "old").currently == "old")
+    }
+
     @Test("reflection evidence is limited to memory ids that were in the prompt")
     func reflections() throws {
         let generated = try Fixtures.decode(
@@ -201,6 +214,32 @@ struct PromptTests {
         let prompt = Prompts.dayPlan(try Fixtures.context(.maria, knownLocations: Fixtures.world.allLocations))
         for name in ["Oak Hill College library", "Hobbs Cafe", "Maria's dorm room"] {
             #expect(prompt.contains(name), "\(name)")
+        }
+    }
+
+    @Test("the identity-revision prompt carries the old status, known events with venue, and memories")
+    func identityRevisionPrompt() throws {
+        let context = try Fixtures.context(.klaus, memories: Self.memories, storylines: [Fixtures.party])
+        let prompt = Prompts.identityRevision(context)
+        #expect(prompt.contains("Currently: \(AgentProfile.klaus.currently)"))
+        #expect(prompt.contains("valentines-party: Valentine's Day party at Hobbs Cafe at \(WorldMap.hobbsCafe.rawValue)"))
+        for memory in Self.memories {
+            #expect(prompt.contains(memory))
+        }
+    }
+
+    @Test("the status changes daily, so it is in every prompt and not in the fixed instructions")
+    func statusIsInPromptsNotInstructions() throws {
+        let context = try Fixtures.context(.klaus, memories: Self.memories)
+        let status = "Currently: \(AgentProfile.klaus.currently)"
+        #expect(!Prompts.instructions(for: .klaus).contains("Currently:"))
+        let request = ConversationRequest(initiator: context, partner: try Fixtures.context(.maria), maxTurns: 6)
+        for prompt in [
+            Prompts.identityRevision(context), Prompts.dayPlan(context),
+            Prompts.hourPlan(context, dayPlan: DayPlan(wakeHour: 7, entries: [])), Prompts.reflection(context),
+            Prompts.conversation(request), Prompts.poignancy(["saw Maria"], for: .klaus),
+        ] {
+            #expect(prompt.contains(status))
         }
     }
 

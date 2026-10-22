@@ -19,6 +19,8 @@ public actor Simulation {
         /// Observations are rated in one batched call every N waking hours.
         public var poignancyBatchHours = 4
         public var retrievalLimit = 8
+        /// Longest `currently` an identity revision may set (about 60 words), since every prompt carries it.
+        public var maxCurrentlyCharacters = 400
         public var sleepHour = 22
         /// Most locations listed in a prompt; keeps the hour-plan prompt flat as the town grows.
         public var maxLocationsInContext = 12
@@ -203,8 +205,22 @@ public actor Simulation {
     }
 
     private func makeContext(for runtime: inout AgentRuntime, query: String) -> AgentContext {
-        let memories = runtime.memory.retrieve(
-            query: embedder.embed(query), now: now, limit: configuration.retrievalLimit)
+        makeContext(for: &runtime, queries: [(query, configuration.retrievalLimit)])
+    }
+
+    /// One retrieval per query, each with its own limit, merged in order without duplicates
+    /// and capped at `retrievalLimit`.
+    private func makeContext(for runtime: inout AgentRuntime, queries: [(String, Int)]) -> AgentContext {
+        var memories: [MemoryNode] = []
+        for (query, limit) in queries {
+            // Never ask for more than still fits: retrieval touches `lastAccessed` on what it returns.
+            let room = min(limit, configuration.retrievalLimit - memories.count)
+            guard room > 0 else { break }
+            for node in runtime.memory.retrieve(query: embedder.embed(query), now: now, limit: room)
+            where !memories.contains(where: { $0.id == node.id }) {
+                memories.append(node)
+            }
+        }
         // Events under way, then upcoming ones (soonest first), then those that are over (most
         // recently ended first), then the undated; the cap must never let old events crowd out a
         // new one, nor drop one that is still going on.
@@ -255,10 +271,18 @@ public actor Simulation {
 
     private func planDayIfNeeded(_ id: AgentID) async throws {
         guard var runtime = agents[id], runtime.dayPlanDay != now.day, isAwake(runtime) else { return }
-        let context = makeContext(for: &runtime, query: "\(runtime.profile.name)'s plan for today")
+        // As in the original, the first day is planned from the seed profile; every later day
+        // starts by revising `currently` from what happened since.
+        let hadEarlierDay = runtime.dayPlanDay != nil
         runtime.dayPlanDay = now.day
         runtime.conversationsToday = 0
         runtime.reflectionsToday = 0
+        agents[id] = runtime
+        if hadEarlierDay {
+            try await reviseIdentity(id)
+        }
+        guard var runtime = agents[id] else { return }
+        let context = makeContext(for: &runtime, query: "\(runtime.profile.name)'s plan for today")
         agents[id] = runtime
         do {
             let response = try await brain.planDay(context)
@@ -273,6 +297,43 @@ public actor Simulation {
             agents[id] = updated
         } catch let error as BrainError {
             fail(id, .planDay, error)
+        }
+    }
+
+    /// The original's `revise_identity`: retrieves on its two focal points (today's plan and
+    /// important recent events), stores the notes as one memory, and replaces `currently`,
+    /// which every later prompt carries in its instructions. A failure keeps the old status.
+    private func reviseIdentity(_ id: AgentID) async throws {
+        guard var runtime = agents[id] else { return }
+        let name = runtime.profile.name
+        let limit = configuration.retrievalLimit
+        let context = makeContext(
+            for: &runtime,
+            queries: [
+                ("\(name)'s plan for Day \(now.day)", max(1, limit / 2)),
+                ("Important recent events for \(name)'s life", limit),
+            ])
+        agents[id] = runtime
+        do {
+            let response = try await brain.reviseIdentity(context)
+            record(.reviseIdentity, id, response.receipt)
+            guard var updated = agents[id] else { return }
+            let revision = response.value
+            let text = "\(name)'s note for today: \(revision.planNote) \(revision.thoughtNote)"
+            // Untagged on purpose: the agent already holds the tagged memories this was drawn from,
+            // and a tagged `.plan` would read as a second accepted invitation.
+            updated.memory.append(
+                kind: .plan, text: text, poignancy: 5,
+                provenance: .reflected(from: context.relevantMemories.map(\.id)), embedding: embedder.embed(text),
+                at: now)
+            // `currently` is in every later prompt, so its length is capped here whatever the model wrote.
+            let currently = String(revision.currently.prefix(configuration.maxCurrentlyCharacters))
+            if !currently.isEmpty {
+                updated.profile.currently = currently
+            }
+            agents[id] = updated
+        } catch let error as BrainError {
+            fail(id, .reviseIdentity, error)
         }
     }
 

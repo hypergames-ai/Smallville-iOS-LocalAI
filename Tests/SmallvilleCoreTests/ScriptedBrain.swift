@@ -5,6 +5,8 @@ import SmallvilleCore
 struct ScriptedBrain: AgentBrain {
     var base = StubBrain()
     var observe: (@Sendable (AgentContext) async -> Void)?
+    var reviseIdentity: (@Sendable (AgentContext) async throws -> IdentityRevision?)?
+    var planDay: (@Sendable (AgentContext) async throws -> DayPlan?)?
     var planHour: (@Sendable (AgentContext, DayPlan) async throws -> HourPlan?)?
     var converse: (@Sendable (ConversationRequest) async throws -> Conversation?)?
     var reflect: (@Sendable (AgentContext) async throws -> [Reflection]?)?
@@ -12,8 +14,19 @@ struct ScriptedBrain: AgentBrain {
 
     private static let receipt = BrainCallReceipt(inputTokens: 300, outputTokens: 60, wallSeconds: 0)
 
+    func reviseIdentity(_ context: AgentContext) async throws -> BrainResponse<IdentityRevision> {
+        await observe?(context)
+        if let revision = try await reviseIdentity?(context) {
+            return BrainResponse(value: revision, receipt: Self.receipt)
+        }
+        return try await base.reviseIdentity(context)
+    }
+
     func planDay(_ context: AgentContext) async throws -> BrainResponse<DayPlan> {
         await observe?(context)
+        if let plan = try await planDay?(context) {
+            return BrainResponse(value: plan, receipt: Self.receipt)
+        }
         return try await base.planDay(context)
     }
 

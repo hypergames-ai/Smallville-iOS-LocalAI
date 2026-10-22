@@ -3,7 +3,8 @@ import Foundation
 import SmallvilleCore
 
 /// Builds the text the model sees. Everything stable about an agent goes in `instructions`;
-/// everything that changes goes at the end of the prompt. Budget: the whole thing must fit in
+/// everything that changes (including `currently`, which `reviseIdentity` rewrites daily)
+/// goes at the end of the prompt. Budget: the whole thing must fit in
 /// 3,000 tokens with the schema and the response, so these are terse by design. `memoryLimit`
 /// caps retrieved memories per agent; the brain halves it to retry a context overflow.
 enum Prompts {
@@ -15,8 +16,18 @@ enum Prompts {
         You are simulating \(profile.name), \(profile.age), \(profile.occupation), in the small town of Smallville.
         Innate traits: \(profile.innateTraits).
         Lifestyle: \(profile.lifestyle).
-        Currently: \(profile.currently)
         Stay in character. Be concrete and brief. Use only locations and people named in the prompt.
+        """
+    }
+
+    static func identityRevision(_ context: AgentContext, memoryLimit: Int = defaultMemoryLimit) -> String {
+        """
+        It is \(context.now), and \(context.profile.name) has just woken up.
+        \(storylineBlock(context))
+        \(memoryBlock(context, limit: memoryLimit))
+        \(status(context.profile))
+        What should \(context.profile.name) remember while planning today, and how do they feel about recent \
+        events? Then rewrite Currently for today.
         """
     }
 
@@ -24,9 +35,10 @@ enum Prompts {
         """
         It is \(context.now). Write \(context.profile.name)'s plan for today as an hour-by-hour outline.
         \(usualPlaces(context))
-        Say where each entry happens. Unless memories say otherwise, work or study at the workplace, take meals \
+        Say where each entry happens. Unless Currently or memories say otherwise, work or study at the workplace, take meals \
         and breaks at the favorite spot, and be home at night.
         \(memoryBlock(context, limit: memoryLimit))
+        \(status(context.profile))
         """
     }
 
@@ -40,6 +52,7 @@ enum Prompts {
             \(locationBlock(context))
             \(storylineBlock(context))
             \(memoryBlock(context, limit: memoryLimit))
+            \(status(context.profile))
             Do this hour's task where it says. Otherwise: a storyline event at its venue while it lasts (once it is \
             over, move on), work or study at \
             the workplace, meals and breaks at the favorite spot, home at night.
@@ -61,6 +74,7 @@ enum Prompts {
             \(lines(a.relevantMemories.prefix(memoryLimit)))
             What \(b.profile.name) remembers:
             \(lines(b.relevantMemories.prefix(max(0, memoryLimit - 1))))
+            \(status(a.profile))
             Write the conversation (at most \(request.maxTurns) turns), then list the social acts it contained.
             Use the full names \(a.profile.name) and \(b.profile.name). Use storyline ids as listed, or none.
             """
@@ -70,6 +84,7 @@ enum Prompts {
         """
         It is \(context.now). Here are \(context.profile.name)'s recent memories, with ids:
         \(lines(context.relevantMemories.prefix(memoryLimit), withIDs: true))
+        \(status(context.profile))
         What are one to three high-level insights \(context.profile.name) could draw? Cite memory ids.
         """
     }
@@ -79,10 +94,16 @@ enum Prompts {
         return """
             Rate how memorable each event is for \(profile.name) from 1 (brushing teeth) to 10 (a breakup or a big party).
             \(numbered)
+            \(status(profile))
             """
     }
 
     // MARK: - Blocks
+
+    /// The agent's current status. It changes daily, so it lives in the prompt, not the instructions.
+    private static func status(_ profile: AgentProfile) -> String {
+        "Currently: \(profile.currently)"
+    }
 
     private static func locationBlock(_ context: AgentContext) -> String {
         // The same fallback as Mapping.locationIDs, so the prompt lists exactly the schema's choices.

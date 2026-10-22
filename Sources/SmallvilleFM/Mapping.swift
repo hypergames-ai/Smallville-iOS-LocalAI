@@ -24,6 +24,14 @@ enum Mapping {
         return ids
     }
 
+    /// The notes as generated; a blank `currently` keeps the previous status.
+    static func identityRevision(_ generated: GeneratedIdentityRevision, previous: String) -> IdentityRevision {
+        let currently = generated.currently.trimmingCharacters(in: .whitespacesAndNewlines)
+        return IdentityRevision(
+            planNote: generated.planNote, thoughtNote: generated.thoughtNote,
+            currently: currently.isEmpty ? previous : currently)
+    }
+
     /// The outline as generated, entry by entry.
     static func dayPlan(_ generated: GeneratedDayPlan) -> DayPlan {
         DayPlan(

@@ -203,6 +203,23 @@ public struct Reflection: Hashable, Sendable, Codable {
     }
 }
 
+/// The original's `revise_identity`: what an agent carries into a new day, written at wake
+/// before the day plan so commitments from earlier days (an accepted invite) shape the outline.
+public struct IdentityRevision: Hashable, Sendable, Codable {
+    /// What to keep in mind while planning today.
+    public var planNote: String
+    /// How the agent feels about recent events.
+    public var thoughtNote: String
+    /// The replacement for `AgentProfile.currently`.
+    public var currently: String
+
+    public init(planNote: String, thoughtNote: String, currently: String) {
+        self.planNote = planNote
+        self.thoughtNote = thoughtNote
+        self.currently = currently
+    }
+}
+
 /// What one brain call cost. The simulation records it; the budget judges it.
 public struct BrainCallReceipt: Hashable, Sendable, Codable {
     public var inputTokens: Int
@@ -237,8 +254,9 @@ public enum BrainError: Error, Sendable {
     case malformed(String)
 }
 
-/// The five decisions the simulation asks for. Everything else is rules in the core.
+/// The six decisions the simulation asks for. Everything else is rules in the core.
 public protocol AgentBrain: Sendable {
+    func reviseIdentity(_ context: AgentContext) async throws -> BrainResponse<IdentityRevision>
     func planDay(_ context: AgentContext) async throws -> BrainResponse<DayPlan>
     func planHour(_ context: AgentContext, dayPlan: DayPlan) async throws -> BrainResponse<HourPlan>
     func converse(_ request: ConversationRequest) async throws -> BrainResponse<Conversation>
