@@ -98,24 +98,24 @@ public actor FoundationModelsBrain: AgentBrain {
             do {
                 let content: Content
                 let receipt: BrainCallReceipt
-                let raw: String
+                let raw: GeneratedContent
                 if let schema {
                     let response = try await session.respond(to: text, schema: schema)
                     content = try Content(response.content)
-                    raw = response.rawContent.jsonString
+                    raw = response.rawContent
                     receipt = await self.receipt(
                         for: response, instructions: instructions, prompt: text, schema: schema,
                         seconds: seconds(since: start, clock))
                 } else {
                     let response = try await session.respond(to: text, generating: type)
                     content = response.content
-                    raw = response.rawContent.jsonString
+                    raw = response.rawContent
                     receipt = await self.receipt(
                         for: response, instructions: instructions, prompt: text, schema: Content.generationSchema,
                         seconds: seconds(since: start, clock))
                 }
                 traceSection(
-                    "\(call) RESPONSE (in \(receipt.inputTokens) out \(receipt.outputTokens) tokens)", raw)
+                    "\(call) RESPONSE (in \(receipt.inputTokens) out \(receipt.outputTokens) tokens)", raw.jsonString)
                 log.debug(
                     "\(kind.rawValue, privacy: .public) \(profile.id.rawValue, privacy: .public): in \(receipt.inputTokens) out \(receipt.outputTokens) \(receipt.wallSeconds, format: .fixed(precision: 1))s"
                 )
@@ -156,8 +156,13 @@ public actor FoundationModelsBrain: AgentBrain {
     // MARK: - Trace
 
     /// Logs `text` under `header`, split on line boundaries into pieces of at most 800 bytes.
+    /// Both are autoclosures so nothing is built (schema JSON included) unless the "trace"
+    /// category is capturing debug messages, e.g. under Xcode or `log stream --level debug`.
     // VERIFY: the unified log is said to truncate long messages (around 1 KB); 800 is a guess at a safe size.
-    private func traceSection(_ header: String, _ text: String) {
+    private func traceSection(_ header: @autoclosure () -> String, _ text: @autoclosure () -> String) {
+        guard trace.isEnabled(type: .debug) else { return }
+        let header = header()
+        let text = text()
         var pieces: [String] = []
         var current = ""
         for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
