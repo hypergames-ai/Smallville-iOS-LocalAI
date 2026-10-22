@@ -8,6 +8,11 @@ A port of Stanford's [Generative Agents](https://github.com/joonspk-research/gen
 
 A small town of generative agents (memory stream → retrieve → reflect → plan → act) runs at "ant farm" pace on the phone. You plant thoughts in agents ("you want to throw a Valentine's party at Hobbs Cafe"), watch the information spread, and the app detects the emergent behavior (who heard, who planned to go, who showed up) and lets you browse and export the evidence.
 
+This demos behavioral generativity:
+"Isabella Rodriguez invited Maria Lopez to Valentine's Day party at Hobbs Cafe"
+"Maria Lopez invited Klaus Mueller to Valentine's Day party at Hobbs Cafe"
+In this run: Isabella was forbidden to talk to Klaus (Isabella ⟂ Klaus option is ON), and the goal was for Klaus to be invited to the party (via Maria, who was previously invited by Isabella). There is logic where one cannot invite another to a party unless they are Isabella or have been invited already, so even though Isabella couldn't talk to Klaus, Maria couldn't invite Klaus until she herself was invited. 
+
 ## Requirements
 
 - Xcode 27 on an Apple silicon Mac running macOS 27 with Apple Intelligence enabled (needed to run the headless simulator on the Mac's model).
