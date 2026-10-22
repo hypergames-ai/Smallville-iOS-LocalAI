@@ -158,7 +158,8 @@ public actor FoundationModelsBrain: AgentBrain {
     /// Logs `text` under `header`, split on line boundaries into pieces of at most 800 bytes.
     /// Both are autoclosures so nothing is built (schema JSON included) unless the "trace"
     /// category is capturing debug messages, e.g. under Xcode or `log stream --level debug`.
-    // VERIFY: the unified log is said to truncate long messages (around 1 KB); 800 is a guess at a safe size.
+    // The unified log truncates long messages; 800-byte pieces come through whole on an iPhone
+    // (checked on device), though the exact limit was not measured.
     private func traceSection(_ header: @autoclosure () -> String, _ text: @autoclosure () -> String) {
         guard trace.isEnabled(type: .debug) else { return }
         let header = header()
