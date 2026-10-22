@@ -30,11 +30,15 @@ struct SmallvilleApp: App {
 
     /// `-autorunMinutes N` (a launch argument, read through UserDefaults) starts the simulation
     /// and stops after N game-minutes, so a run can be checked without tapping. The brain is the
-    /// stub unless `-brain onDevice` is also passed.
+    /// stub unless `-brain onDevice` is also passed. Isabella and Klaus are kept apart unless
+    /// `-noContact NO` is passed.
     private func autorunIfRequested() {
         let minutes = UserDefaults.standard.integer(forKey: "autorunMinutes")
         guard minutes > 0, !controller.isRunning else { return }
         controller.useOnDeviceModel = UserDefaults.standard.string(forKey: "brain") == "onDevice"
+        if UserDefaults.standard.object(forKey: "noContact") != nil {
+            controller.isabellaKlausNoContact = UserDefaults.standard.bool(forKey: "noContact")
+        }
         controller.stopAfterMinutes = minutes
         controller.start()
     }

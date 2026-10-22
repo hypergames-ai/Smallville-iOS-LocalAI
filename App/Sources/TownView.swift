@@ -35,6 +35,8 @@ struct TownView: View {
                         if let reason = controller.modelInfo.unavailableReason {
                             Text("Unavailable: \(reason)").font(.caption).foregroundStyle(.secondary)
                         }
+                        Toggle("Isabella ⟂ Klaus", isOn: $controller.isabellaKlausNoContact)
+                            .disabled(controller.isRunning)
                     }
                     .fixedSize()
                     Spacer()

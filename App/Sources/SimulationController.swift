@@ -21,15 +21,18 @@ final class SimulationController {
     private(set) var conversationCount = 0
     private(set) var isRunning = false
     private(set) var lastError: String?
-    var brainChoice: BrainChoice = .stub
+    var brainChoice: BrainChoice = .onDevice
     /// When set, the run loop ends after this many game-minutes from the start (used by `-autorunMinutes`).
     var stopAfterMinutes: Int?
     /// The pace: wall-clock seconds a game-hour takes at least; an hour that finishes sooner waits
     /// out the rest. The default is the flat-out floor: much below it, quiet hours (night, the stub
     /// brain) publish several snapshots in one frame. Read every hour, so a change applies mid-run.
     var secondsPerGameHour = 0.25
+    /// When on, Isabella and Klaus never talk, so Klaus can only hear of the party from Maria.
+    /// On by default; read when a run starts.
+    var isabellaKlausNoContact = true
 
-    /// Toggle-friendly view of `brainChoice`; off means the deterministic stub brain.
+    /// Toggle-friendly view of `brainChoice` (on by default); off means the deterministic stub brain.
     var useOnDeviceModel: Bool {
         get { brainChoice == .onDevice }
         set { brainChoice = newValue ? .onDevice : .stub }
@@ -73,7 +76,10 @@ final class SimulationController {
             brain = FoundationModelsBrain()
         }
 
-        let simulation = Simulation(world: .smallvilleSubset(), profiles: AgentProfile.sample3, brain: brain)
+        var configuration = Simulation.Configuration()
+        configuration.noContactPairs = isabellaKlausNoContact ? Simulation.Configuration.isabellaKlausNoContact : []
+        let simulation = Simulation(
+            world: .smallvilleSubset(), profiles: AgentProfile.sample3, brain: brain, configuration: configuration)
         self.simulation = simulation
         isRunning = true
         lastError = nil
