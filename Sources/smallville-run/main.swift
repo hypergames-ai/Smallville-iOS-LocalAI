@@ -5,6 +5,7 @@
 //   swift run smallville-run --minutes 240 --agents 3 --fm         (Mac's on-device model)
 //   swift run smallville-run --minutes 240 --agents 3 --fm --conversations   (also print transcripts)
 //   swift run smallville-run --minutes 1440 --no-party --whisper "klaus: Klaus wants to ask Maria to the dance"
+//   swift run smallville-run --minutes 2880 --no-contact isabella,klaus --conversations   (they never talk)
 //
 // `print` is allowed here and nowhere else in the package.
 
@@ -24,6 +25,7 @@ struct Options {
     var whispers: [(AgentID, String)] = []
     var outputPath: String?
     var printConversations = false
+    var noContactPairs: Set<Set<AgentID>> = []
 
     static func parse(_ arguments: [String]) throws -> Options {
         var options = Options()
@@ -48,6 +50,13 @@ struct Options {
                 let agent = raw[..<colon].trimmingCharacters(in: .whitespaces)
                 let text = raw[raw.index(after: colon)...].trimmingCharacters(in: .whitespaces)
                 options.whispers.append((AgentID(agent), text))
+            case "--no-contact":
+                let raw = try required(iterator.next(), for: argument)
+                let names = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                guard names.count == 2, names[0] != names[1] else {
+                    throw RunnerError.usage("--no-contact expects two different agents, \"a,b\"")
+                }
+                options.noContactPairs.insert([AgentID(names[0]), AgentID(names[1])])
             case "--conversations":
                 options.printConversations = true
             case "--out":
@@ -69,6 +78,7 @@ struct Options {
     static let usageText = """
         usage: smallville-run [--minutes N] [--agents N] [--seed N] [--fm] [--no-party]
                               [--whisper "agent: text"]... [--out path.json] [--conversations]
+                              [--no-contact a,b]...
         """
 }
 
@@ -86,6 +96,8 @@ struct Report: Codable {
     var agents: Int
     var seed: UInt64
     var brain: String
+    /// Pairs kept from ever talking (`--no-contact`), each sorted, so a run replays from its report.
+    var noContactPairs: [[String]]
     var budget: BudgetSummary
     var brainFailures: Int
     /// Conversations held this run; the quickest check that agents are meeting at all.
@@ -161,10 +173,15 @@ do {
     if options.agents > AgentProfile.sample3.count {
         print("note: only \(AgentProfile.sample3.count) profiles exist yet; running with \(profiles.count)")
     }
+    let present = Set(profiles.map(\.id))
+    for agent in options.noContactPairs.flatMap({ $0 }).sorted() where !present.contains(agent) {
+        throw RunnerError.usage("--no-contact names \(agent.rawValue), who is not in this run")
+    }
     let (brain, brainName) = try makeBrain(options)
 
     var configuration = Simulation.Configuration()
     configuration.seed = options.seed
+    configuration.noContactPairs = options.noContactPairs
     let simulation = Simulation(
         world: .smallvilleSubset(), profiles: profiles, brain: brain, configuration: configuration)
 
@@ -200,6 +217,7 @@ do {
     }
     let report = Report(
         gameMinutes: hours * 60, agents: profiles.count, seed: options.seed, brain: brainName,
+        noContactPairs: options.noContactPairs.map { $0.map(\.rawValue).sorted() }.sorted { $0.lexicographicallyPrecedes($1) },
         budget: snapshot.budget, brainFailures: snapshot.brainFailures,
         conversations: events.filter {
             if case .conversed = $0 { return true }

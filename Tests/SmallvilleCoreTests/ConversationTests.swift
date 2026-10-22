@@ -95,6 +95,72 @@ struct ConversationTests {
         #expect(!Self.conversations(in: await social.events).isEmpty)
     }
 
+    @Test("a no-contact pair never talks, even sitting together in public all day; others still do")
+    func noContactPairInPublic() async throws {
+        #expect(Simulation.Configuration().noContactPairs.isEmpty, "off by default")
+        let isabellaKlaus: Set<AgentID> = [AgentProfile.isabella.id, AgentProfile.klaus.id]
+        func run(noContact: Bool) async throws -> [Conversation] {
+            let brain = ScriptedBrain(planHour: { context, _ in
+                HourPlan(
+                    hour: context.now.hour,
+                    actions: [
+                        PlannedAction(
+                            startMinute: 0, durationMinutes: 60, activity: "hanging out",
+                            location: WorldMap.hobbsCafe, emoji: "☕️",
+                            event: EventTriple(subject: context.profile.name, predicate: "is", object: "hanging out"))
+                    ])
+            })
+            var configuration = Simulation.Configuration()
+            if noContact { configuration.noContactPairs = Simulation.Configuration.isabellaKlausNoContact }
+            let simulation = Simulation(
+                world: .smallvilleSubset(), profiles: AgentProfile.sample3, brain: brain,
+                configuration: configuration)
+            try await simulation.run(minutes: 24 * 60)
+            return Self.conversations(in: await simulation.events).map(\.0)
+        }
+
+        let off = try await run(noContact: false)
+        #expect(off.contains { Set([$0.initiator, $0.partner]) == isabellaKlaus }, "baseline: they do talk")
+
+        let on = try await run(noContact: true)
+        #expect(!on.contains { Set([$0.initiator, $0.partner]) == isabellaKlaus })
+        #expect(on.contains { Set([$0.initiator, $0.partner]).contains(AgentProfile.maria.id) })
+    }
+
+    @Test("a no-contact pair does not talk in a private place even when acquainted")
+    func noContactPairInPrivate() async throws {
+        let (world, friends) = Self.strangers(acquainted: true)
+        var configuration = Simulation.Configuration()
+        configuration.noContactPairs = [[AgentID("ana"), AgentID("ben")]]
+        let simulation = Simulation(world: world, profiles: friends, brain: StubBrain(), configuration: configuration)
+        try await simulation.run(minutes: 2 * 60)
+        #expect(Self.conversations(in: await simulation.events).isEmpty)
+    }
+
+    @Test("with Isabella and Klaus apart, Klaus hears of the party only from Maria (seed 7)")
+    func klausHearsFromMaria() async throws {
+        var configuration = Simulation.Configuration()
+        configuration.seed = 7
+        configuration.noContactPairs = Simulation.Configuration.isabellaKlausNoContact
+        let simulation = Simulation(
+            world: .smallvilleSubset(), profiles: AgentProfile.sample3, brain: StubBrain(),
+            configuration: configuration)
+        await simulation.whisper(ValentinesPartyTests.party)
+        try await simulation.run(minutes: 2 * SimTime.minutesPerDay)
+
+        let party = ValentinesPartyTests.party.id
+        let first = try #require(
+            await simulation.memories(of: AgentProfile.klaus.id).first { $0.storylines.contains(party) },
+            "the stub passes the party on, so Klaus should hear of it")
+        guard case .told(let teller, _) = first.provenance else {
+            Issue.record("Klaus's first party memory should be told-by, got \(first.provenance)")
+            return
+        }
+        #expect(teller == AgentProfile.maria.id)
+        let discovery = try #require(await simulation.discoveries().first)
+        #expect(discovery.diffusion.allSatisfy { !($0.from == AgentProfile.isabella.id && $0.to == AgentProfile.klaus.id) })
+    }
+
     @Test("a listener's first storyline memory is told-by someone who already knew, at a real conversation (seed 7)")
     func provenance() async throws {
         let simulation = ValentinesPartyTests.makeSimulation()

@@ -25,7 +25,7 @@ Smallville's loop is kept, its call structure is not.
 | Day plan | 1 call + hourly decomposition calls | 1 call at wake → `DayPlan` | 1 |
 | Hour plan | ~8 calls per action (task decomposition, sector, arena, object, emoji, triple, state) | 1 call per waking hour → `HourPlan` with 1–3 `PlannedAction`s, each carrying location, emoji and event triple | ~15 |
 | Perception | poignancy call per observation | observations appended with a default score; one batched `ratePoignancy` call every 4 waking hours | ~4 |
-| Reaction gating | model decides whether to react | rules: co-located, awake, cooldown, per-day cap | 0 |
+| Reaction gating | model decides whether to react | rules: co-located, awake, cooldown, per-day cap, not a `noContactPairs` pair | 0 |
 | Conversation | 1 call per utterance | 1 call → whole `Conversation` (turns, `SocialAct`s, conveyed storylines, two summaries) | ≤4 |
 | Reflection | several calls per trigger | 1 call when accumulated importance crosses a threshold, at most 3 per day and ≥1 h apart → `[Reflection]` | ~2, cap 3 |
 | **Total** | 600–1,000 | | **~26, budget 45** |

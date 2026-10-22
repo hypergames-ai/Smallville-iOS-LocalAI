@@ -30,6 +30,11 @@ public actor Simulation {
         public var maxStorylinesInContext = 4
         /// Ticks an agent must spend at a storyline's venue around its event time to count as attending.
         public var minimumDwellSamples = 2
+        /// Pairs of agents who never converse, wherever they are. Empty by default (off).
+        public var noContactPairs: Set<Set<AgentID>> = []
+
+        /// The "Maria is Klaus's only source" experiment: Isabella and Klaus never talk.
+        public static let isabellaKlausNoContact: Set<Set<AgentID>> = [[AgentID("isabella"), AgentID("klaus")]]
 
         public init() {}
     }
@@ -404,7 +409,9 @@ public actor Simulation {
     }
 
     /// Strangers meet in public; at a private place one of the two has to know the other.
+    /// A no-contact pair never meets anywhere.
     private func mayMeet(_ a: AgentID, _ b: AgentID, at location: LocationID) -> Bool {
+        if configuration.noContactPairs.contains([a, b]) { return false }
         if world.location(location)?.isPublic ?? false { return true }
         guard let profileA = agents[a]?.profile, let profileB = agents[b]?.profile else { return false }
         return profileA.relationships[b] != nil || profileB.relationships[a] != nil
