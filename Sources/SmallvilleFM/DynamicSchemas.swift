@@ -56,7 +56,7 @@ enum DynamicSchemas {
         let act = DynamicGenerationSchema(
             name: "GeneratedSocialAct",
             properties: [
-                property("kind", "Kind of act", choice("SocialActKind", SocialActKind.allCases.map(\.rawValue))),
+                property("kind", kindDescription, choice("SocialActKind", SocialActKind.allCases.map(\.rawValue))),
                 property("from", "Name of the person performing the act", choice("From", names)),
                 property("to", "Name of the person it is directed at", choice("To", names)),
                 property("topic", "Topic in a few words", string),
@@ -87,6 +87,11 @@ enum DynamicSchemas {
             ])
         return try GenerationSchema(root: root, dependencies: [])
     }
+
+    /// Defines the act kinds the model confuses most: it filed "would you help with the party?"
+    /// as `plan`. Keep in step with `GeneratedSocialAct.kind`'s `@Guide`.
+    static let kindDescription =
+        "Kind of act. invite: asks the other to come to or help with an event. accept or decline: answers an invite or request. inform: shares news. plan: agrees on a time or place to meet."
 
     // MARK: - Pieces
 

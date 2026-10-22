@@ -78,7 +78,8 @@ struct GeneratedTurn {
 @Generable
 struct GeneratedSocialAct {
     @Guide(
-        description: "Kind of act",
+        description:
+            "Kind of act. invite: asks the other to come to or help with an event. accept or decline: answers an invite or request. inform: shares news. plan: agrees on a time or place to meet.",
         .anyOf(["invite", "accept", "decline", "inform", "ask", "gossip", "plan", "disagree"]))
     var kind: String
     @Guide(description: "Name of the person performing the act")
